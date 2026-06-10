@@ -1,0 +1,31 @@
+{
+  "name": "jt400-proxy-client",
+  "version": "0.1.0",
+  "description": "Dual-mode jt400 proxy client for Node.js: use as a library or run as a standalone HTTP server",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./server": "./server.js"
+  },
+  "bin": {
+    "jt400-proxy-client": "./bin/server.js"
+  },
+  "scripts": {
+    "start": "node bin/server.js",
+    "example": "node example-direct.js",
+    "test": "node --test",
+    "test:framing": "node -e 'require(\"./index\").selfTestFraming && console.log(\"framing self-test ok\")'"
+  },
+  "keywords": ["jt400", "as400", "db2", "ibm-i", "proxy", "hikari", "standalone-server"],
+  "author": "eeworx",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.19.2"
+  },
+  "devDependencies": {
+    "supertest": "^6.3.4"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

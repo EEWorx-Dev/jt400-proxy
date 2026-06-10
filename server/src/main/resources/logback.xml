@@ -1,0 +1,15 @@
+<configuration>
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE" />
+    </root>
+
+    <!-- Hikari and our code at DEBUG if needed for acquisition times -->
+    <logger name="com.zaxxer.hikari" level="INFO" />
+    <logger name="dev.eeworx.mb.utils.jt400proxy" level="DEBUG" />
+</configuration>

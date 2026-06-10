@@ -1,0 +1,53 @@
+# Java / Maven
+target/
+*.class
+*.jar
+!*-sources.jar
+!*-javadoc.jar
+dependency-reduced-pom.xml
+pom.xml.tag
+pom.xml.releaseBackup
+pom.xml.versionsBackup
+pom.xml.next
+release.properties
+dependency-reduced-pom.xml
+buildNumber.properties
+.mvn/timing.properties
+.mvn/wrapper/maven-wrapper.jar
+
+# Node / npm
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json.bak
+*.tgz
+
+# IDE / editors
+.idea/
+*.iml
+.vscode/
+*.swp
+*~
+.DS_Store
+
+# Runtime / logs / local secrets
+*.log
+logs/
+config.json
+config.local.json
+*.env
+.env
+.env.local
+server/run-local.sh
+client/run-local.sh
+
+# OS
+Thumbs.db
+ehthumbs.db
+
+# Misc
+*.bak
+*.tmp
+*.swp
+*~ 

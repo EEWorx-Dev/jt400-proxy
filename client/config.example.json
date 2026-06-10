@@ -1,0 +1,13 @@
+{
+  "proxy": {
+    "host": "localhost",
+    "port": 9400,
+    "numLinks": 3,
+    "requestTimeoutMs": 30000
+  },
+  "facade": {
+    "host": "127.0.0.1",
+    "port": 3456
+  },
+  "logLevel": "info"
+}

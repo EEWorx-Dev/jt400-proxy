@@ -1,0 +1,44 @@
+# jt400-proxy example configuration
+# Prefer environment variables in production / containers.
+# These are fallbacks / documentation.
+
+# AS/400 connection (required)
+AS400_HOST=192.168.88.170
+AS400_USER=youruser
+AS400_PASSWORD=yourpass
+AS400_DATABASE=MBMWALTPRD
+
+# Extra raw JDBC properties appended to the URL (semicolon separated, no leading ;)
+# Common useful ones for jt400:
+#   translate binary=true
+#   prompt=false
+#   tcp no delay=true
+#   errors=full
+#   naming=system
+#   date format=iso
+#   time format=iso
+#   decimal separator=.
+AS400_JDBC_PROPS=translate binary=true;prompt=false;tcp no delay=true;errors=full
+
+# Proxy listen
+PROXY_TCP_PORT=9400
+
+# HikariCP pool tuning (sane defaults for AS/400)
+HIKARI_MAX_POOL_SIZE=20
+HIKARI_MIN_IDLE=5
+HIKARI_CONNECTION_TIMEOUT_MS=30000
+HIKARI_IDLE_TIMEOUT_MS=600000
+HIKARI_MAX_LIFETIME_MS=1800000
+# How often Hikari will run a lightweight keepalive (test query) on idle connections.
+# This helps ensure connections are validated before being returned to the application.
+HIKARI_KEEPALIVE_TIME_MS=120000
+# Timeout for the connection validation test query
+HIKARI_VALIDATION_TIMEOUT_MS=5000
+# Test query used by Hikari to validate connections before returning them to the caller
+HIKARI_CONNECTION_TEST_QUERY=SELECT 1 FROM SYSIBM.SYSDUMMY1
+# Number of retries when acquiring a connection if the pre-return test query fails.
+# Total attempts = 1 + this value. Default 2 (i.e. up to 3 attempts).
+HIKARI_CONNECTION_ACQUIRE_RETRIES=2
+
+# Optional: simple log level control if we add a logger later
+LOG_LEVEL=INFO
