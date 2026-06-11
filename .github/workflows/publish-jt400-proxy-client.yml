@@ -19,6 +19,10 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    env:
+      # Opt into Node.js 24 runtime for GitHub Actions (checkout, setup-node, etc.)
+      # This addresses the deprecation of Node 20 on GitHub-hosted runners.
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
       - name: Checkout repository
@@ -29,8 +33,7 @@ jobs:
         with:
           node-version: '24'
           registry-url: 'https://npm.pkg.github.com'
-          # This configures npm to publish to GitHub Packages
-          # 'lts/*' automatically uses the current Long Term Support version (currently 24)
+          # Use the same major version as your production runtime (Node 24 is current LTS)
 
       - name: Install dependencies & run tests
         working-directory: client
@@ -38,13 +41,20 @@ jobs:
           npm ci
           npm test
 
+      - name: Debug auth and registry (safe)
+        working-directory: client
+        run: |
+          npm config list --json | grep -E 'registry|//npm.pkg.github.com' || true
+          echo "Authenticated as (redacted for log):"
+          npm whoami --registry=https://npm.pkg.github.com 2>&1 | cat || echo "whoami failed (expected if no read permission yet)"
+
       - name: Publish to GitHub Packages
         working-directory: client
         run: |
           if [ -n "${{ github.event.inputs.version }}" ]; then
             npm version ${{ github.event.inputs.version }} --no-git-tag-version
           fi
-          npm publish
+          npm publish --verbose
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # GITHUB_TOKEN is automatically provided by GitHub Actions
