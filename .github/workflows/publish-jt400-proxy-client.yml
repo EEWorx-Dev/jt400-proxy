@@ -27,7 +27,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 'lts/*'
+          node-version: '24'
           registry-url: 'https://npm.pkg.github.com'
           # This configures npm to publish to GitHub Packages
           # 'lts/*' automatically uses the current Long Term Support version (currently 24)
