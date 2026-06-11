@@ -16,7 +16,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { startServer } = require('../server');
+const { startServer } = require('../facade');
 
 // --- Tiny CLI parser (no extra deps) ---
 function parseArgs(argv) {

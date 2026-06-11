@@ -1,0 +1,29 @@
+# Ignore everything by default, then explicitly include via "files" in package.json
+*
+
+# But we still want these for development
+!package.json
+!README.md
+
+# Never publish these
+node_modules/
+npm-debug.log
+*.log
+.DS_Store
+.env
+.env.*
+coverage/
+.nyc_output/
+test/
+tests/
+*.test.js
+*.spec.js
+.git/
+.gitignore
+.vscode/
+.idea/
+*.swp
+*.swo
+dist/
+build/
+target/

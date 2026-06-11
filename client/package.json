@@ -1,23 +1,39 @@
 {
-  "name": "jt400-proxy-client",
+  "name": "@eeworx/jt400-proxy-client",
   "version": "0.1.0",
-  "description": "Dual-mode jt400 proxy client for Node.js: use as a library or run as a standalone HTTP server",
+  "description": "Dual-mode jt400 proxy client for Node.js: use as a library or run as a standalone HTTP server. Bridges to a stable Java Hikari-backed jt400 proxy over duplex TCP.",
   "main": "index.js",
   "exports": {
     ".": "./index.js",
-    "./server": "./server.js"
+    "./facade": "./facade.js",
+    "./server": "./facade.js"
   },
   "bin": {
-    "jt400-proxy-client": "./bin/server.js"
+    "jt400-proxy-client": "./bin/cli.js"
   },
+  "files": [
+    "index.js",
+    "lib/",
+    "bin/",
+    "README.md",
+    "package.json"
+  ],
   "scripts": {
-    "start": "node bin/server.js",
+    "start": "node bin/cli.js",
     "example": "node example-direct.js",
     "test": "node --test",
-    "test:framing": "node -e 'require(\"./index\").selfTestFraming && console.log(\"framing self-test ok\")'"
+    "test:framing": "node -e 'require(\"./index\").selfTestFraming && console.log(\"framing self-test ok\")'",
+    "prepublishOnly": "npm test"
   },
-  "keywords": ["jt400", "as400", "db2", "ibm-i", "proxy", "hikari", "standalone-server"],
-  "author": "eeworx",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/eeworx/jt400-proxy.git"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "keywords": ["jt400", "as400", "db2", "ibm-i", "proxy", "hikari", "standalone-server", "connection-pool"],
+  "author": "Elisha Ebenezer",
   "license": "MIT",
   "dependencies": {
     "express": "^4.19.2"

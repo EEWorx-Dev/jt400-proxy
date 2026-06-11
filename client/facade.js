@@ -8,6 +8,9 @@
  *   2. Standalone server mode (preferred): Expose a simple HTTP API.
  *
  * This file provides the building blocks for mode 2.
+ * It is exposed as both:
+ *   require('@eeworx/jt400-proxy-client/facade')
+ *   require('@eeworx/jt400-proxy-client/server')   // alias for backward compat
  */
 
 const express = require('express');

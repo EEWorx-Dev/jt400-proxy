@@ -274,10 +274,10 @@ module.exports = Jt400ProxyClient;
 //   const client = new Jt400ProxyClient(...);
 //
 // Mode 2 (standalone HTTP server):
-//   const { startServer } = require('jt400-proxy-client/server');
+//   const { startServer } = require('jt400-proxy-client/facade');
 //   // or simply: npx jt400-proxy-client
 //
 // Both factories are also available from the main entry:
-const serverModule = require('./server');
-module.exports.createFacadeApp = serverModule.createFacadeApp;
-module.exports.startServer = serverModule.startServer;
+const facadeModule = require('./facade');
+module.exports.createFacadeApp = facadeModule.createFacadeApp;
+module.exports.startServer = facadeModule.startServer;
