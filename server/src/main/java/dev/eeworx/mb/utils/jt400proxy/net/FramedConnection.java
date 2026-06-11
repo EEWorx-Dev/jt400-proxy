@@ -4,6 +4,7 @@ import dev.eeworx.mb.utils.jt400proxy.db.HikariPoolManager;
 import dev.eeworx.mb.utils.jt400proxy.db.QueryProcessor;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -19,6 +20,9 @@ import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicLong;
 import java.sql.Connection;
+import java.sql.SQLException;
+import java.util.function.Supplier;
+import javax.sql.DataSource;
 
 /**
  * Handles one persistent client duplex TCP connection.
@@ -39,9 +43,17 @@ public class FramedConnection implements Runnable {
     private static class TxContext {
         final Connection conn;
         final long startTime;
+        long lastUsed;
+
         TxContext(Connection c) {
             this.conn = c;
-            this.startTime = System.currentTimeMillis();
+            long now = System.currentTimeMillis();
+            this.startTime = now;
+            this.lastUsed = now;
+        }
+
+        void touch() {
+            this.lastUsed = System.currentTimeMillis();
         }
     }
 
@@ -52,6 +64,7 @@ public class FramedConnection implements Runnable {
     private final long connId;
     private final long txTimeoutMs;
     private final long txSweeperIntervalMs;
+    private final Supplier<Connection> txConnectionProvider; // provides a fresh Connection to park for a new tx (Hikari in prod, test DS in contract tests)
     private volatile boolean running = true;
 
     private final Map<String, TxContext> parkedTx = new ConcurrentHashMap<>();
@@ -59,7 +72,7 @@ public class FramedConnection implements Runnable {
     private DataInputStream in;
     private DataOutputStream out;
 
-    public FramedConnection(Socket socket, HikariPoolManager poolManager, QueryProcessor queryProcessor, ExecutorService queryExecutor, long txTimeoutMs, long txSweeperIntervalMs) {
+    public FramedConnection(Socket socket, HikariPoolManager poolManager, QueryProcessor queryProcessor, ExecutorService queryExecutor, long txTimeoutMs, long txSweeperIntervalMs, Supplier<Connection> txConnectionProvider) {
         this.socket = socket;
         this.poolManager = poolManager;
         this.queryProcessor = queryProcessor;
@@ -67,6 +80,7 @@ public class FramedConnection implements Runnable {
         this.connId = CONN_ID_SEQ.getAndIncrement();
         this.txTimeoutMs = txTimeoutMs > 0 ? txTimeoutMs : 300_000;
         this.txSweeperIntervalMs = txSweeperIntervalMs > 0 ? txSweeperIntervalMs : 30_000;
+        this.txConnectionProvider = txConnectionProvider;
         startTxSweeper();
     }
 
@@ -169,6 +183,7 @@ public class FramedConnection implements Runnable {
                     writeError(id, "Invalid or expired txId: " + txId);
                     return;
                 }
+                ctx.touch();
                 try {
                     result = queryProcessor.execute(sql, params, txConn);
                 } catch (Exception e) {
@@ -194,7 +209,10 @@ public class FramedConnection implements Runnable {
     private void handleBeginTx(String id, JsonNode req) {
         long start = System.nanoTime();
         try {
-            Connection c = poolManager.getConnection();
+            if (txConnectionProvider == null) {
+                throw new IllegalStateException("No txConnectionProvider available for begin-tx");
+            }
+            Connection c = txConnectionProvider.get();
             c.setAutoCommit(false);
 
             String txId = generateTxId();
@@ -286,14 +304,15 @@ public class FramedConnection implements Runnable {
                 long now = System.currentTimeMillis();
                 for (Iterator<Map.Entry<String, TxContext>> it = parkedTx.entrySet().iterator(); it.hasNext(); ) {
                     Map.Entry<String, TxContext> e = it.next();
-                    if (now - e.getValue().startTime > txTimeoutMs) {
+                    if (now - e.getValue().lastUsed > txTimeoutMs) {
                         TxContext ctx = e.getValue();
                         it.remove();
                         try {
                             ctx.conn.rollback();
                             ctx.conn.setAutoCommit(true);
                             ctx.conn.close();
-                            log.warn("[Conn-{}] Sweeper auto-rolled back expired tx {}", connId, e.getKey());
+                            log.warn("[Conn-{}] Sweeper auto-rolled back expired tx {} (last used {}ms ago, started {}ms ago)", 
+                                    connId, e.getKey(), now - ctx.lastUsed, now - ctx.startTime);
                         } catch (Exception ex) {
                             log.error("[Conn-{}] Sweeper error for tx {}: {}", connId, e.getKey(), ex.getMessage());
                         }
@@ -357,6 +376,23 @@ public class FramedConnection implements Runnable {
             }
         } else {
             n.put("status", "pool-manager-not-available (likely test mode with injected DataSource)");
+        }
+
+        // Include parked transaction info for metrics / monitoring.
+        // startTime is the creation time (useful for total lifetime metrics).
+        // lastUsed is the last activity time (used by the sweeper for idle timeout).
+        ObjectNode txNode = n.putObject("transactions");
+        txNode.put("parkedCount", parkedTx.size());
+        ArrayNode txArray = txNode.putArray("parked");
+        long now = System.currentTimeMillis();
+        for (Map.Entry<String, TxContext> entry : parkedTx.entrySet()) {
+            ObjectNode t = txArray.addObject();
+            t.put("txId", entry.getKey());
+            TxContext ctx = entry.getValue();
+            t.put("startTime", ctx.startTime);
+            t.put("lastUsed", ctx.lastUsed);
+            t.put("ageMs", now - ctx.startTime);
+            t.put("idleMs", now - ctx.lastUsed);
         }
         return n;
     }

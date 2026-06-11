@@ -6,14 +6,19 @@ import dev.eeworx.mb.utils.jt400proxy.db.QueryProcessor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+
+
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.sql.Connection;
+import java.sql.SQLException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Supplier;
 
 /**
  * Listens on a single TCP port and accepts persistent full-duplex client connections.
@@ -29,6 +34,7 @@ public class FramedDuplexServer {
     private final ProxyConfig config;
     private final HikariPoolManager poolManager;
     private final QueryProcessor queryProcessor;
+    private final Supplier<Connection> txConnectionProvider; // provided by caller; real code derives from Hikari, tests can inject whatever
     private ExecutorService connectionExecutor;   // for per-client IO handlers
     private ExecutorService queryExecutor;        // for actual JDBC work (keeps IO threads responsive)
     private ServerSocket serverSocket;
@@ -38,17 +44,23 @@ public class FramedDuplexServer {
         this.config = config;
         this.poolManager = poolManager;
         this.queryProcessor = new QueryProcessor(poolManager);
+        this.txConnectionProvider = createTxConnectionProviderFromPool(poolManager);
         initExecutors();
     }
 
     /**
-     * Test-friendly constructor: allows injecting a QueryProcessor backed by any DataSource
-     * (e.g. H2 for contract tests, or a real test pool). No HikariPoolManager required.
+     * Test-friendly constructor.
+     * Allows full control over how connections are obtained for parked transactions
+     * (e.g. a plain DataSource for H2-based contract tests).
+     *
+     * The supplied provider is used exclusively for begin-tx / parked tx connections.
+     * Normal query execution still goes through the injected QueryProcessor.
      */
-    public FramedDuplexServer(ProxyConfig config, QueryProcessor queryProcessor) {
+    public FramedDuplexServer(ProxyConfig config, QueryProcessor queryProcessor, Supplier<Connection> txConnectionProvider) {
         this.config = config;
         this.poolManager = null;
         this.queryProcessor = queryProcessor;
+        this.txConnectionProvider = txConnectionProvider;
         initExecutors();
     }
 
@@ -72,6 +84,19 @@ public class FramedDuplexServer {
         );
     }
 
+    private Supplier<Connection> createTxConnectionProviderFromPool(HikariPoolManager pm) {
+        if (pm == null) {
+            return null;
+        }
+        return () -> {
+            try {
+                return pm.getConnection();
+            } catch (SQLException e) {
+                throw new RuntimeException("Failed to acquire connection for tx from pool", e);
+            }
+        };
+    }
+
     public void start() throws IOException {
         if (running.get()) return;
 
@@ -90,7 +115,7 @@ public class FramedDuplexServer {
                     client.setKeepAlive(true);
 
                     FramedConnection conn = new FramedConnection(client, poolManager, queryProcessor, queryExecutor,
-                            config.getTxTimeoutMs(), config.getTxSweeperIntervalMs());
+                            config.getTxTimeoutMs(), config.getTxSweeperIntervalMs(), txConnectionProvider);
                     connectionExecutor.submit(conn);
                 } catch (IOException e) {
                     if (running.get()) {

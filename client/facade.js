@@ -9,8 +9,8 @@
  *
  * This file provides the building blocks for mode 2.
  * It is exposed as both:
- *   require('@eeworx/jt400-proxy-client/facade')
- *   require('@eeworx/jt400-proxy-client/server')   // alias for backward compat
+ *   require('@eeworx-dev/jt400-proxy-client/facade')
+ *   require('@eeworx-dev/jt400-proxy-client/server')   // alias for backward compat
  */
 
 const express = require('express');
@@ -90,6 +90,88 @@ function createFacadeApp(customClient, logger = console) {
         error: e.message || 'execute failed',
         sqlState: e.sqlState || null
       });
+    }
+  });
+
+  // Batch and parallel endpoints (modeled on sibling microservice patterns + direct client methods)
+  // Supports bulk workloads; results include per-query timing, success/error, and summary stats.
+  app.post('/batch', async (req, res) => {
+    const start = Date.now();
+    const { queries = [], txId: rawTxId } = req.body || {};
+    let txId = rawTxId;
+    let createdTx = false;
+
+    try {
+      if (txId === 'new') {
+        txId = await c.beginTransaction();
+        createdTx = true;
+      }
+
+      const options = txId ? { txId } : {};
+      const result = await c.runBatch(queries, options);
+
+      if (createdTx) {
+        await c.commit(txId);
+        result.txId = txId;
+        result.txStatus = 'committed';
+      }
+
+      logger.debug?.('batch completed', { durationMs: Date.now() - start, totalQueries: result.totalQueries });
+      res.json(result);
+    } catch (e) {
+      if (createdTx && txId) {
+        try { await c.rollback(txId); } catch (_) {}
+      }
+      logger.warn?.('batch failed', { error: e.message, sqlState: e.sqlState });
+      const errBody = {
+        error: e.message || 'batch failed',
+        sqlState: e.sqlState || null
+      };
+      if (createdTx && txId) {
+        errBody.txId = txId;
+        errBody.txStatus = 'rolledback';
+      }
+      res.status(500).json(errBody);
+    }
+  });
+
+  app.post('/parallel', async (req, res) => {
+    const start = Date.now();
+    const { queries = [], concurrency = 10, txId: rawTxId } = req.body || {};
+    let txId = rawTxId;
+    let createdTx = false;
+
+    try {
+      if (txId === 'new') {
+        txId = await c.beginTransaction();
+        createdTx = true;
+      }
+
+      const options = txId ? { txId } : {};
+      const result = await c.runParallel(queries, concurrency, options);
+
+      if (createdTx) {
+        await c.commit(txId);
+        result.txId = txId;
+        result.txStatus = 'committed';
+      }
+
+      logger.debug?.('parallel completed', { durationMs: Date.now() - start, totalQueries: result.totalQueries });
+      res.json(result);
+    } catch (e) {
+      if (createdTx && txId) {
+        try { await c.rollback(txId); } catch (_) {}
+      }
+      logger.warn?.('parallel failed', { error: e.message, sqlState: e.sqlState });
+      const errBody = {
+        error: e.message || 'parallel failed',
+        sqlState: e.sqlState || null
+      };
+      if (createdTx && txId) {
+        errBody.txId = txId;
+        errBody.txStatus = 'rolledback';
+      }
+      res.status(500).json(errBody);
     }
   });
 
@@ -262,7 +344,7 @@ async function startServer(options = {}) {
       address: `http://${host}:${port}`,
       proxy: clientConfig,
     });
-    logger.info('Available endpoints: POST /query, POST /execute, GET /health, GET /stats, GET /metrics');
+    logger.info('Available endpoints: POST /query, POST /execute, POST /batch, POST /parallel, GET /health, GET /stats, GET /metrics');
   });
 
   const close = () => new Promise((resolve) => {

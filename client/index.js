@@ -103,6 +103,13 @@ class Jt400ProxyClient {
   /**
    * Request current HikariCP connection pool metrics from the Java proxy.
    * Useful for monitoring (exposed via HTTP /pool-stats and /metrics).
+   *
+   * Response includes:
+   *  - Hikari pool stats (activeConnections, idleConnections, etc.)
+   *  - transactions: { parkedCount, parked: [ {txId, startTime, lastUsed, ageMs, idleMs}, ... ] }
+   *    startTime = creation time of the tx (from begin-tx)
+   *    lastUsed  = last activity timestamp (updated on every tx-scoped query/execute)
+   *    The sweeper now uses lastUsed for timeout decisions (last-activity model).
    */
   async getPoolStats() {
     const link = this._pickLink();
@@ -203,6 +210,118 @@ class Jt400ProxyClient {
       throw err;
     }
     return { affectedRows: resp.affectedRows || 0, durationMs: resp.durationMs };
+  }
+
+  /**
+   * Sequential batch execution (great for the kind of bulk workloads shown in
+   * the sibling microservice's server.js + as400pool.runBatch).
+   *
+   * queries: array of { name?, sql, params? }
+   * Returns { totalQueries, successful, failed, totalDurationMs, results: [...] }
+   * Each result has name, success, durationMs, data (or error + sqlState).
+   *
+   * Implemented on top of this.query (row-oriented). For DML-heavy batches
+   * you can still call execute individually or post-process.
+   */
+  async runBatch(queries = [], options = {}) {
+    const results = [];
+    const totalStart = process.hrtime.bigint();
+    const queryOptions = options.txId ? { txId: options.txId } : {};
+
+    for (const q of queries) {
+      const start = process.hrtime.bigint();
+      try {
+        const data = await this.query(q.sql, q.params || [], queryOptions);
+        const end = process.hrtime.bigint();
+        results.push({
+          name: q.name || 'Unnamed',
+          success: true,
+          durationMs: Number(end - start) / 1e6,
+          data
+        });
+      } catch (err) {
+        const end = process.hrtime.bigint();
+        results.push({
+          name: q.name || 'Unnamed',
+          success: false,
+          error: err.message || String(err),
+          sqlState: err.sqlState,
+          durationMs: Number(end - start) / 1e6
+        });
+      }
+    }
+
+    const totalEnd = process.hrtime.bigint();
+    const totalMs = Number(totalEnd - totalStart) / 1e6;
+
+    return {
+      totalQueries: results.length,
+      successful: results.filter(r => r.success).length,
+      failed: results.filter(r => !r.success).length,
+      totalDurationMs: parseFloat(totalMs.toFixed(2)),
+      results
+    };
+  }
+
+  /**
+   * Parallel execution with simple concurrency limiter (sibling as400pool.runParallel style).
+   * Our duplex + request ID design makes overlapping requests cheap.
+   */
+  async runParallel(queries = [], concurrency = 10, options = {}) {
+    const results = new Array(queries.length);
+    const totalStart = process.hrtime.bigint();
+    const queryOptions = options.txId ? { txId: options.txId } : {};
+
+    let currentIndex = 0;
+
+    const executeNext = async () => {
+      const index = currentIndex++;
+      if (index >= queries.length) return;
+
+      const q = queries[index];
+      const start = process.hrtime.bigint();
+      try {
+        const data = await this.query(q.sql, q.params || [], queryOptions);
+        const end = process.hrtime.bigint();
+        results[index] = {
+          name: q.name || 'Unnamed',
+          success: true,
+          durationMs: Number(end - start) / 1e6,
+          data
+        };
+      } catch (err) {
+        const end = process.hrtime.bigint();
+        results[index] = {
+          name: q.name || 'Unnamed',
+          success: false,
+          error: err.message || String(err),
+          sqlState: err.sqlState,
+          durationMs: Number(end - start) / 1e6
+        };
+      }
+
+      await executeNext();
+    };
+
+    const runners = [];
+    const n = Math.min(concurrency, queries.length);
+    for (let i = 0; i < n; i++) {
+      runners.push(executeNext());
+    }
+    await Promise.all(runners);
+
+    const totalEnd = process.hrtime.bigint();
+    const totalMs = Number(totalEnd - totalStart) / 1e6;
+    const successful = results.filter(r => r && r.success).length;
+
+    return {
+      totalQueries: results.length,
+      successful,
+      failed: results.length - successful,
+      totalDurationMs: parseFloat(totalMs.toFixed(2)),
+      avgPerQuery: parseFloat((totalMs / Math.max(1, results.length)).toFixed(2)),
+      results
+    };
   }
 
   getStats() {

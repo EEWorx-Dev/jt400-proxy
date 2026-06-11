@@ -23,7 +23,7 @@ Node apps / microservices
         |
         | HTTP (simple JSON)
         v
-Node: @eeworx/jt400-proxy-client  ( + optional express facade on e.g. :3456 )
+Node: @eeworx-dev/jt400-proxy-client  ( + optional express facade on e.g. :3456 )
    (2-5 persistent duplex TCP sockets, request id multiplexing, auto-reconnect)
         |
         | framed TCP (length32 + JSON {id, op, sql, params})
@@ -40,12 +40,12 @@ The Java side speaks the "duplex" protocol. The Node side speaks HTTP to the wor
 
 ## Node.js Client Modes
 
-The `@eeworx/jt400-proxy-client` package supports two usage modes:
+The `@eeworx-dev/jt400-proxy-client` package supports two usage modes:
 
 ### Mode 1: Library / Dependency (integrated into your app)
 
 ```js
-const Jt400ProxyClient = require('@eeworx/jt400-proxy-client');
+const Jt400ProxyClient = require('@eeworx-dev/jt400-proxy-client');
 
 const client = new Jt400ProxyClient({
   host: 'localhost',
@@ -64,22 +64,22 @@ Use this when you want to embed the client directly inside existing services.
 Run the package as a dedicated service that exposes a simple HTTP API:
 
 ```bash
-npx @eeworx/jt400-proxy-client
+npx @eeworx-dev/jt400-proxy-client
 # or after global install
-@eeworx/jt400-proxy-client
+@eeworx-dev/jt400-proxy-client
 ```
 
 **New in this version** — full CLI + config file + PM2 support:
 
 ```bash
-@eeworx/jt400-proxy-client \
+@eeworx-dev/jt400-proxy-client \
   --port 4000 \
   --proxy-host 10.0.0.42 \
   --proxy-port 9400 \
   --log-level debug
 
 # Or using a config file
-@eeworx/jt400-proxy-client --config ./my-proxy.json
+@eeworx-dev/jt400-proxy-client --config ./my-proxy.json
 ```
 
 Supported flags (all also available as environment variables):
@@ -109,7 +109,7 @@ See `client/ecosystem.config.js` for a ready-to-use configuration (includes log 
 You can also pass environment variables directly:
 
 ```bash
-pm2 start bin/cli.js --name @eeworx/jt400-proxy-client -- \
+pm2 start bin/cli.js --name @eeworx-dev/jt400-proxy-client -- \
   --proxy-host 10.0.0.5 --port 3456
 ```
 
@@ -145,7 +145,7 @@ On the Java side, Hikari metrics are always available via the `pool-stats` opera
 You can also start the server programmatically (great for tests or embedding):
 
 ```js
-const { startServer } = require('@eeworx/jt400-proxy-client/server');
+const { startServer } = require('@eeworx-dev/jt400-proxy-client/server');
 
 const { server, client, close } = await startServer({
   port: 3456,
@@ -162,7 +162,7 @@ Other microservices can then call this local (or nearby) HTTP endpoint without n
 You can also require the server factory if you want to embed the HTTP facade inside your own Express app:
 
 ```js
-const { createFacadeApp } = require('@eeworx/jt400-proxy-client/server');
+const { createFacadeApp } = require('@eeworx-dev/jt400-proxy-client/server');
 const { app } = createFacadeApp();
 ```
 
@@ -222,6 +222,20 @@ Expect:
 ```
 
 Use the client directly in code too (see `example-direct.js`).
+
+Batch and parallel (for bulk workloads, modeled on patterns from related pool implementations):
+
+```bash
+curl -X POST http://localhost:3456/batch \
+  -H 'content-type: application/json' \
+  -d '{"queries":[{"name":"Q1","sql":"SELECT 1 as ONE FROM SYSIBM.SYSDUMMY1","params":[]}]}'
+
+curl -X POST http://localhost:3456/parallel \
+  -H 'content-type: application/json' \
+  -d '{"queries":[...], "concurrency": 5}'
+```
+
+They also support `txId` for running the whole batch under a parked transaction.
 
 ## Protocol (Framed TCP)
 
@@ -357,7 +371,7 @@ JT400_PROXY_HOST=127.0.0.1 JT400_PROXY_PORT=19400 node -e '
 '
 ```
 
-## Publishing & Consumption (`@eeworx/jt400-proxy-client`)
+## Publishing & Consumption (`@eeworx-dev/jt400-proxy-client`)
 
 The reusable piece for other projects (including bb2-server-node + the adapter) is the **Node client package** located in the `client/` directory.
 
@@ -379,16 +393,16 @@ npm publish
 ```
 
 **Tips for your environment**:
-- If this is internal-only, publish as a **scoped package** (`@eeworx/jt400-proxy-client`) and use `--access restricted`.
+- If this is internal-only, publish as a **scoped package** (`@eeworx-dev/jt400-proxy-client`) and use `--access restricted`.
 - Or run a private Verdaccio / Artifactory / GitHub Packages registry and point `.npmrc` at it.
 - The `package.json` already has a `"files"` field and `"prepublishOnly": "npm test"` hook to keep the published tarball clean.
-- After publishing, anyone (or any project) can do `npm install @eeworx/jt400-proxy-client`.
+- After publishing, anyone (or any project) can do `npm install @eeworx-dev/jt400-proxy-client`.
 
 ### 2. Global install (mainly for the CLI / standalone facade)
 
 ```bash
-npm install -g @eeworx/jt400-proxy-client
-@eeworx/jt400-proxy-client   # starts the HTTP facade on port 3456 (configurable via env)
+npm install -g @eeworx-dev/jt400-proxy-client
+@eeworx-dev/jt400-proxy-client   # starts the HTTP facade on port 3456 (configurable via env)
 ```
 
 This is useful when you want other services (or bb2-server-node itself) to talk pure HTTP to the facade without pulling the client as a code dependency.
@@ -399,7 +413,7 @@ In the consuming project's `package.json`:
 
 ```json
 "dependencies": {
-  "@eeworx/jt400-proxy-client": "^0.1.0"
+  "@eeworx-dev/jt400-proxy-client": "^0.1.0"
 }
 ```
 
@@ -408,12 +422,12 @@ Then `npm install`.
 In your adapter (or directly):
 
 ```js
-const Jt400ProxyClient = require('@eeworx/jt400-proxy-client');
+const Jt400ProxyClient = require('@eeworx-dev/jt400-proxy-client');
 // or for the facade/server helpers:
-const { createFacadeApp, startServer } = require('@eeworx/jt400-proxy-client/server');
+const { createFacadeApp, startServer } = require('@eeworx-dev/jt400-proxy-client/server');
 ```
 
-The `jt400-proxy-adapter.js` (the bridge for `ms_database.js`) does exactly `require('@eeworx/jt400-proxy-client')` internally, so once the package is published (or linked), the adapter will just work.
+The `jt400-proxy-adapter.js` (the bridge for `ms_database.js`) does exactly `require('@eeworx-dev/jt400-proxy-client')` internally, so once the package is published (or linked), the adapter will just work.
 
 ### Quick local dev alternative (no publish needed)
 
@@ -425,15 +439,15 @@ cd client
 npm link
 
 # In bb2-server-node (or any consumer)
-npm link @eeworx/jt400-proxy-client
+npm link @eeworx-dev/jt400-proxy-client
 ```
 
-This symlinks it so `require('@eeworx/jt400-proxy-client')` resolves to your local copy.
+This symlinks it so `require('@eeworx-dev/jt400-proxy-client')` resolves to your local copy.
 
 Global link also works for the CLI:
 ```bash
 npm link
-@eeworx/jt400-proxy-client
+@eeworx-dev/jt400-proxy-client
 ```
 
 ### Java side note
