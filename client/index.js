@@ -92,32 +92,8 @@ class Jt400ProxyClient {
    * Execute a SELECT and return the array of row objects directly.
    * Throws on error (with .sqlState if available from the server).
    */
-  async query(sql, params = []) {
-    const link = this._pickLink();
-    const resp = await link.request({ op: 'query', sql, params });
-    if (!resp.success) {
-      const err = new Error(resp.error || 'query failed');
-      err.sqlState = resp.sqlState;
-      err.durationMs = resp.durationMs;
-      throw err;
-    }
-    return resp.data || [];
-  }
-
-  /**
-   * Execute a DML statement (INSERT/UPDATE/DELETE etc.) and return { affectedRows }.
-   */
-  async execute(sql, params = []) {
-    const link = this._pickLink();
-    const resp = await link.request({ op: 'execute', sql, params });
-    if (!resp.success) {
-      const err = new Error(resp.error || 'execute failed');
-      err.sqlState = resp.sqlState;
-      err.durationMs = resp.durationMs;
-      throw err;
-    }
-    return { affectedRows: resp.affectedRows || 0, durationMs: resp.durationMs };
-  }
+  // query and execute now support optional txId via options param (see below overloads)
+  // The old signatures are kept for backward compat via the new implementations.
 
   async ping() {
     const link = this._pickLink();
@@ -138,6 +114,95 @@ class Jt400ProxyClient {
     }
     const { id, success, op, connection, ...stats } = resp;
     return stats;
+  }
+
+  /**
+   * Begin a new transaction on the Java side (parks a connection from the pool).
+   * Returns a txId that must be passed to subsequent query/execute under the tx,
+   * and finally to commit/rollback.
+   *
+   * The server-side sweeper will auto-rollback if the tx exceeds the configured
+   * timeout (default 5 minutes).
+   */
+  async beginTransaction(options = {}) {
+    const link = this._pickLink();
+    const req = { op: 'begin-tx' };
+    if (options.isolationLevel) req.options = { isolationLevel: options.isolationLevel };
+    if (options.timeoutMs) {
+      req.options = req.options || {};
+      req.options.timeoutMs = options.timeoutMs;
+    }
+    const resp = await link.request(req);
+    if (!resp.success) {
+      const err = new Error(resp.error || 'failed to begin tx');
+      err.sqlState = resp.sqlState;
+      throw err;
+    }
+    return resp.txId;
+  }
+
+  /**
+   * Commit a transaction by txId. The parked connection is released back to the pool.
+   */
+  async commit(txId) {
+    if (!txId) throw new Error('txId is required');
+    const link = this._pickLink();
+    const resp = await link.request({ op: 'commit-tx', txId });
+    if (!resp.success) {
+      const err = new Error(resp.error || 'commit failed');
+      err.sqlState = resp.sqlState;
+      throw err;
+    }
+    return { txId: resp.txId, status: resp.status };
+  }
+
+  /**
+   * Rollback a transaction by txId. The parked connection is released back to the pool.
+   */
+  async rollback(txId) {
+    if (!txId) throw new Error('txId is required');
+    const link = this._pickLink();
+    const resp = await link.request({ op: 'rollback-tx', txId });
+    if (!resp.success) {
+      const err = new Error(resp.error || 'rollback failed');
+      err.sqlState = resp.sqlState;
+      throw err;
+    }
+    return { txId: resp.txId, status: resp.status };
+  }
+
+  /**
+   * Query under an optional tx. If txId provided, uses the parked connection.
+   */
+  async query(sql, params = [], options = {}) {
+    const link = this._pickLink();
+    const req = { op: 'query', sql, params };
+    if (options.txId) req.txId = options.txId;
+    const resp = await link.request(req);
+    if (!resp.success) {
+      const err = new Error(resp.error || 'query failed');
+      err.sqlState = resp.sqlState;
+      err.durationMs = resp.durationMs;
+      throw err;
+    }
+    return resp.data || [];
+  }
+
+  /**
+   * Execute under an optional tx. If txId provided, uses the parked connection.
+   */
+  async execute(sql, params = [], options = {}) {
+    const link = this._pickLink();
+    const req = { op: 'execute', sql, params };
+    if (options.txId) req.txId = options.txId;
+    const resp = await link.request(req);
+    if (!resp.success) {
+      const err = new Error(resp.error || 'execute failed');
+      err.sqlState = resp.sqlState;
+      err.durationMs = resp.durationMs;
+      throw err;
+    }
+    return { affectedRows: resp.affectedRows || 0, durationMs: resp.durationMs };
   }
 
   getStats() {

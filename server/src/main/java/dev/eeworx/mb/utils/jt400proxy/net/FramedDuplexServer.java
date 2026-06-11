@@ -89,7 +89,8 @@ public class FramedDuplexServer {
                     client.setTcpNoDelay(true);
                     client.setKeepAlive(true);
 
-                    FramedConnection conn = new FramedConnection(client, poolManager, queryProcessor, queryExecutor);
+                    FramedConnection conn = new FramedConnection(client, poolManager, queryProcessor, queryExecutor,
+                            config.getTxTimeoutMs(), config.getTxSweeperIntervalMs());
                     connectionExecutor.submit(conn);
                 } catch (IOException e) {
                     if (running.get()) {

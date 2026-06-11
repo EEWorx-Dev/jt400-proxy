@@ -30,6 +30,8 @@ public final class ProxyConfig {
     private final long hikariValidationTimeoutMs;
     private final String hikariConnectionTestQuery;
     private final int hikariConnectionAcquireRetries;
+    private final long txTimeoutMs;
+    private final long txSweeperIntervalMs;
 
     private ProxyConfig(Builder b) {
         this.host = Objects.requireNonNull(b.host, "AS400_HOST is required");
@@ -52,6 +54,8 @@ public final class ProxyConfig {
                 ? b.hikariConnectionTestQuery
                 : "SELECT 1 FROM SYSIBM.SYSDUMMY1";
         this.hikariConnectionAcquireRetries = b.hikariConnectionAcquireRetries > 0 ? b.hikariConnectionAcquireRetries : 2; // 1 initial + 2 retries = 3 attempts total
+        this.txTimeoutMs = b.txTimeoutMs > 0 ? b.txTimeoutMs : 300_000; // 5 minutes
+        this.txSweeperIntervalMs = b.txSweeperIntervalMs > 0 ? b.txSweeperIntervalMs : 30_000; // check every 30s
     }
 
     public static ProxyConfig load() {
@@ -72,6 +76,8 @@ public final class ProxyConfig {
                 .hikariValidationTimeoutMs(longEnv("HIKARI_VALIDATION_TIMEOUT_MS", 5_000))
                 .hikariConnectionTestQuery(env("HIKARI_CONNECTION_TEST_QUERY", null))
                 .hikariConnectionAcquireRetries(intEnv("HIKARI_CONNECTION_ACQUIRE_RETRIES", 2))
+                .txTimeoutMs(longEnv("TX_TIMEOUT_MS", 300_000))
+                .txSweeperIntervalMs(longEnv("TX_SWEEPER_INTERVAL_MS", 30_000))
                 .build();
     }
 
@@ -114,6 +120,8 @@ public final class ProxyConfig {
     public long getHikariValidationTimeoutMs() { return hikariValidationTimeoutMs; }
     public String getHikariConnectionTestQuery() { return hikariConnectionTestQuery; }
     public int getHikariConnectionAcquireRetries() { return hikariConnectionAcquireRetries; }
+    public long getTxTimeoutMs() { return txTimeoutMs; }
+    public long getTxSweeperIntervalMs() { return txSweeperIntervalMs; }
 
     /**
      * Build the full JDBC URL for jt400.
@@ -151,6 +159,8 @@ public final class ProxyConfig {
         private long hikariValidationTimeoutMs;
         private String hikariConnectionTestQuery;
         private int hikariConnectionAcquireRetries;
+        private long txTimeoutMs;
+        private long txSweeperIntervalMs;
 
         public Builder host(String v) { this.host = v; return this; }
         public Builder user(String v) { this.user = v; return this; }
@@ -168,6 +178,8 @@ public final class ProxyConfig {
         public Builder hikariValidationTimeoutMs(long v) { this.hikariValidationTimeoutMs = v; return this; }
         public Builder hikariConnectionTestQuery(String v) { this.hikariConnectionTestQuery = v; return this; }
         public Builder hikariConnectionAcquireRetries(int v) { this.hikariConnectionAcquireRetries = v; return this; }
+        public Builder txTimeoutMs(long v) { this.txTimeoutMs = v; return this; }
+        public Builder txSweeperIntervalMs(long v) { this.txSweeperIntervalMs = v; return this; }
 
         public ProxyConfig build() {
             return new ProxyConfig(this);

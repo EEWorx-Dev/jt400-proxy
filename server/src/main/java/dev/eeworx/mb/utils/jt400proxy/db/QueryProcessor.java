@@ -160,6 +160,46 @@ public class QueryProcessor {
         }
     }
 
+    /**
+     * Execute using a provided Connection (for transactions).
+     * The caller is responsible for the Connection lifecycle (commit/rollback/close).
+     */
+    public Result execute(String sql, List<Object> params, Connection providedConn) {
+        long start = System.nanoTime();
+        String connInfo = describeConnection(providedConn);
+
+        try {
+            try (PreparedStatement ps = providedConn.prepareStatement(sql)) {
+                bindParameters(ps, params);
+
+                boolean hasResultSet = ps.execute();
+
+                if (hasResultSet) {
+                    try (ResultSet rs = ps.getResultSet()) {
+                        List<Map<String, Object>> rows = mapResultSet(rs);
+                        long dur = (System.nanoTime() - start) / 1_000_000;
+                        return Result.successSelect(rows, dur, connInfo);
+                    }
+                } else {
+                    int updateCount = ps.getUpdateCount();
+                    long dur = (System.nanoTime() - start) / 1_000_000;
+                    return Result.successUpdate(updateCount, dur, connInfo);
+                }
+            }
+        } catch (SQLException e) {
+            long dur = (System.nanoTime() - start) / 1_000_000;
+            return Result.failure(
+                    e.getMessage(),
+                    e.getSQLState(),
+                    e.getErrorCode(),
+                    dur
+            );
+        } catch (Exception e) {
+            long dur = (System.nanoTime() - start) / 1_000_000;
+            return Result.failure(e.getMessage(), null, null, dur);
+        }
+    }
+
     private Connection acquireConnection() throws SQLException {
         if (dataSource != null) {
             return dataSource.getConnection();

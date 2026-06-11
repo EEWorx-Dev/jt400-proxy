@@ -133,6 +133,67 @@ function createFacadeApp(customClient, logger = console) {
     }
   });
 
+  // === Transaction support (basic, parks connection for duration of tx) ===
+  app.post('/tx', async (req, res) => {
+    try {
+      const options = req.body || {};
+      const txId = await c.beginTransaction(options);
+      res.json({ txId, status: 'active' });
+    } catch (e) {
+      res.status(500).json({ error: 'Failed to begin tx', message: e.message });
+    }
+  });
+
+  app.post('/tx/:txId/query', async (req, res) => {
+    try {
+      const { txId } = req.params;
+      const { sql, params = [] } = req.body || {};
+      if (!sql) return res.status(400).json({ error: 'sql is required' });
+      const data = await c.query(sql, params, { txId });
+      res.json({ data });
+    } catch (e) {
+      res.status(500).json({
+        error: e.message || 'tx query failed',
+        sqlState: e.sqlState || null
+      });
+    }
+  });
+
+  app.post('/tx/:txId/execute', async (req, res) => {
+    try {
+      const { txId } = req.params;
+      const { sql, params = [] } = req.body || {};
+      if (!sql) return res.status(400).json({ error: 'sql is required' });
+      const result = await c.execute(sql, params, { txId });
+      res.json(result);
+    } catch (e) {
+      res.status(500).json({
+        error: e.message || 'tx execute failed',
+        sqlState: e.sqlState || null
+      });
+    }
+  });
+
+  app.post('/tx/:txId/commit', async (req, res) => {
+    try {
+      const { txId } = req.params;
+      const result = await c.commit(txId);
+      res.json(result);
+    } catch (e) {
+      res.status(500).json({ error: 'commit failed', message: e.message });
+    }
+  });
+
+  app.post('/tx/:txId/rollback', async (req, res) => {
+    try {
+      const { txId } = req.params;
+      const result = await c.rollback(txId);
+      res.json(result);
+    } catch (e) {
+      res.status(500).json({ error: 'rollback failed', message: e.message });
+    }
+  });
+
   // Basic error handler
   app.use((err, req, res, next) => {
     console.error('Facade error:', err);

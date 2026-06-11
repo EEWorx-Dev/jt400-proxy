@@ -8,7 +8,9 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.Iterator;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 import java.io.*;
 import java.net.Socket;
@@ -16,6 +18,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicLong;
+import java.sql.Connection;
 
 /**
  * Handles one persistent client duplex TCP connection.
@@ -33,22 +36,38 @@ public class FramedConnection implements Runnable {
     private static final AtomicLong CONN_ID_SEQ = new AtomicLong(0);
     private static final Logger log = LoggerFactory.getLogger(FramedConnection.class);
 
+    private static class TxContext {
+        final Connection conn;
+        final long startTime;
+        TxContext(Connection c) {
+            this.conn = c;
+            this.startTime = System.currentTimeMillis();
+        }
+    }
+
     private final Socket socket;
     private final HikariPoolManager poolManager;
     private final QueryProcessor queryProcessor;
     private final ExecutorService queryExecutor;
     private final long connId;
+    private final long txTimeoutMs;
+    private final long txSweeperIntervalMs;
     private volatile boolean running = true;
+
+    private final Map<String, TxContext> parkedTx = new ConcurrentHashMap<>();
 
     private DataInputStream in;
     private DataOutputStream out;
 
-    public FramedConnection(Socket socket, HikariPoolManager poolManager, QueryProcessor queryProcessor, ExecutorService queryExecutor) {
+    public FramedConnection(Socket socket, HikariPoolManager poolManager, QueryProcessor queryProcessor, ExecutorService queryExecutor, long txTimeoutMs, long txSweeperIntervalMs) {
         this.socket = socket;
         this.poolManager = poolManager;
         this.queryProcessor = queryProcessor;
         this.queryExecutor = queryExecutor;
         this.connId = CONN_ID_SEQ.getAndIncrement();
+        this.txTimeoutMs = txTimeoutMs > 0 ? txTimeoutMs : 300_000;
+        this.txSweeperIntervalMs = txSweeperIntervalMs > 0 ? txSweeperIntervalMs : 30_000;
+        startTxSweeper();
     }
 
     @Override
@@ -104,6 +123,15 @@ public class FramedConnection implements Runnable {
                         log.debug("[Conn-{}] pool-stats requested", connId);
                         writeResponse(reqId, getPoolStatsResponse());
                         break;
+                    case "begin-tx":
+                        queryExecutor.submit(() -> handleBeginTx(reqId, requestForWorker));
+                        break;
+                    case "commit-tx":
+                        queryExecutor.submit(() -> handleCommitOrRollback(reqId, requestForWorker, true));
+                        break;
+                    case "rollback-tx":
+                        queryExecutor.submit(() -> handleCommitOrRollback(reqId, requestForWorker, false));
+                        break;
                     case "query":
                     case "execute":
                         queryExecutor.submit(() -> handleQueryOrExecute(reqId, op, requestForWorker));
@@ -126,21 +154,155 @@ public class FramedConnection implements Runnable {
         try {
             String sql = req.has("sql") ? req.get("sql").asText() : "";
             List<Object> params = extractParams(req);
+            String txId = req.has("txId") ? req.get("txId").asText() : null;
 
             if (sql.isBlank()) {
                 writeError(id, "Missing or empty 'sql'");
                 return;
             }
 
-            QueryProcessor.Result result = queryProcessor.execute(sql, params);
+            QueryProcessor.Result result;
+            if (txId != null) {
+                TxContext ctx = parkedTx.get(txId);
+                Connection txConn = ctx != null ? ctx.conn : null;
+                if (txConn == null) {
+                    writeError(id, "Invalid or expired txId: " + txId);
+                    return;
+                }
+                try {
+                    result = queryProcessor.execute(sql, params, txConn);
+                } catch (Exception e) {
+                    // Auto-rollback on any error during tx-scoped operation
+                    // This prevents leaving the tx in a bad state (e.g. deadlock, constraint violation, etc.)
+                    autoRollback(txId, txConn, "error during " + op + ": " + e.getMessage());
+                    throw e;
+                }
+            } else {
+                result = queryProcessor.execute(sql, params);
+            }
 
             ObjectNode resp = result.toJson(MAPPER);
             resp.put("id", id);
             resp.put("op", op);
+            if (txId != null) resp.put("txId", txId);
             writeResponseRaw(resp);
         } catch (Exception e) {
             writeError(id, e.getMessage() != null ? e.getMessage() : e.toString());
         }
+    }
+
+    private void handleBeginTx(String id, JsonNode req) {
+        long start = System.nanoTime();
+        try {
+            Connection c = poolManager.getConnection();
+            c.setAutoCommit(false);
+
+            String txId = generateTxId();
+            parkedTx.put(txId, new TxContext(c));
+
+            ObjectNode resp = MAPPER.createObjectNode();
+            resp.put("txId", txId);
+            resp.put("status", "active");
+
+            long dur = (System.nanoTime() - start) / 1_000_000;
+            resp.put("durationMs", dur);
+
+            writeResponse(id, resp);
+        } catch (Exception e) {
+            writeError(id, "Failed to begin tx: " + e.getMessage());
+        }
+    }
+
+    private void handleCommitOrRollback(String id, JsonNode req, boolean commit) {
+        String txId = req.has("txId") ? req.get("txId").asText() : null;
+        if (txId == null) {
+            writeError(id, "txId required for " + (commit ? "commit" : "rollback"));
+            return;
+        }
+
+        TxContext ctx = parkedTx.remove(txId);
+        Connection c = ctx != null ? ctx.conn : null;
+        if (c == null) {
+            writeError(id, "Invalid or expired txId: " + txId);
+            return;
+        }
+
+        long start = System.nanoTime();
+        try {
+            if (commit) {
+                c.commit();
+            } else {
+                c.rollback();
+            }
+            c.setAutoCommit(true);
+            c.close();
+
+            ObjectNode resp = MAPPER.createObjectNode();
+            resp.put("txId", txId);
+            resp.put("status", commit ? "committed" : "rolled_back");
+
+            long dur = (System.nanoTime() - start) / 1_000_000;
+            resp.put("durationMs", dur);
+
+            writeResponse(id, resp);
+        } catch (Exception e) {
+            // Attempt to close anyway
+            try {
+                c.setAutoCommit(true);
+                c.close();
+            } catch (Exception ignore) {}
+            writeError(id, (commit ? "commit" : "rollback") + " failed: " + e.getMessage());
+        }
+    }
+
+    private void autoRollback(String txId, Connection c, String reason) {
+        parkedTx.remove(txId);
+        try {
+            c.rollback();
+            c.setAutoCommit(true);
+            c.close();
+            log.warn("[Conn-{}] Auto-rolled back tx {} due to {}", connId, txId, reason);
+        } catch (Exception ex) {
+            log.error("[Conn-{}] Auto-rollback failed for tx {}: {}", connId, txId, ex.getMessage());
+        }
+    }
+
+    private String generateTxId() {
+        // Short random string, e.g. tx_ + 12 base36 chars
+        byte[] bytes = new byte[9]; // ~12 chars base36
+        new java.security.SecureRandom().nextBytes(bytes);
+        String rand = new java.math.BigInteger(1, bytes).toString(36);
+        return "tx_" + rand.substring(0, Math.min(12, rand.length()));
+    }
+
+    private void startTxSweeper() {
+        Thread sweeper = new Thread(() -> {
+            while (running) {
+                try {
+                    Thread.sleep(txSweeperIntervalMs);
+                } catch (InterruptedException e) {
+                    return;
+                }
+                long now = System.currentTimeMillis();
+                for (Iterator<Map.Entry<String, TxContext>> it = parkedTx.entrySet().iterator(); it.hasNext(); ) {
+                    Map.Entry<String, TxContext> e = it.next();
+                    if (now - e.getValue().startTime > txTimeoutMs) {
+                        TxContext ctx = e.getValue();
+                        it.remove();
+                        try {
+                            ctx.conn.rollback();
+                            ctx.conn.setAutoCommit(true);
+                            ctx.conn.close();
+                            log.warn("[Conn-{}] Sweeper auto-rolled back expired tx {}", connId, e.getKey());
+                        } catch (Exception ex) {
+                            log.error("[Conn-{}] Sweeper error for tx {}: {}", connId, e.getKey(), ex.getMessage());
+                        }
+                    }
+                }
+            }
+        }, "tx-sweeper-" + connId);
+        sweeper.setDaemon(true);
+        sweeper.start();
     }
 
     private List<Object> extractParams(JsonNode req) {
@@ -232,6 +394,21 @@ public class FramedConnection implements Runnable {
 
     private void closeQuietly() {
         running = false;
+
+        // Cleanup any parked tx connections for this client
+        for (Map.Entry<String, TxContext> entry : parkedTx.entrySet()) {
+            Connection c = entry.getValue().conn;
+            try {
+                c.rollback();
+                c.setAutoCommit(true);
+                c.close();
+                log.debug("[Conn-{}] Cleaned up parked tx {} on disconnect", connId, entry.getKey());
+            } catch (Exception e) {
+                log.warn("[Conn-{}] Error cleaning parked tx {}: {}", connId, entry.getKey(), e.getMessage());
+            }
+        }
+        parkedTx.clear();
+
         try { if (in != null) in.close(); } catch (Exception ignore) {}
         try { if (out != null) out.close(); } catch (Exception ignore) {}
         try { if (socket != null) socket.close(); } catch (Exception ignore) {}

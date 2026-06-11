@@ -39,6 +39,12 @@ HIKARI_CONNECTION_TEST_QUERY=SELECT 1 FROM SYSIBM.SYSDUMMY1
 # Number of retries when acquiring a connection if the pre-return test query fails.
 # Total attempts = 1 + this value. Default 2 (i.e. up to 3 attempts).
 HIKARI_CONNECTION_ACQUIRE_RETRIES=2
+# Tx parked connection max lifetime before auto-rollback by sweeper.
+# Any transaction that lives longer than this without explicit commit/rollback
+# will be automatically rolled back by the background sweeper.
+TX_TIMEOUT_MS=300000
+# Sweeper check interval (how often we scan for expired transactions).
+TX_SWEEPER_INTERVAL_MS=30000
 
 # Optional: simple log level control if we add a logger later
 LOG_LEVEL=INFO
