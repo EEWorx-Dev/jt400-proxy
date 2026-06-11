@@ -1,4 +1,4 @@
-name: Publish @eeworx/jt400-proxy-client
+name: Publish @eeworx-dev/jt400-proxy-client
 
 on:
   workflow_dispatch:
