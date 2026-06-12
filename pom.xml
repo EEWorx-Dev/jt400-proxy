@@ -47,10 +47,18 @@
                     <autoVersionSubmodules>true</autoVersionSubmodules>
                     <useReleaseProfile>false</useReleaseProfile>
                     <releaseProfiles>release</releaseProfiles>
-                    <!-- We recommend running the actual deploy step in GitHub Actions
-                         rather than as part of mvn release:perform from a developer machine.
-                         Use preparationGoals that stop before deploy, then let the workflow
-                         run "mvn deploy -DskipTests -pl server -am" (and/or client publish). -->
+                    <!-- Hybrid release model:
+                         - Use mvn release:prepare (locally or in CI) to bump versions across
+                           all modules (including syncing client/package.json via frontend-maven-plugin),
+                           commit, and create the git tag.
+                         - preparationGoals + goals=verify ensure that release:prepare/perform
+                           stop before any deploy step.
+                         - The actual artifact deploy (server to Maven GH Packages + client npm)
+                           is done by this repo's GitHub Actions workflow on the release event
+                           (see .github/workflows/publish-jt400-proxy.yml). This centralizes auth
+                           (GITHUB_TOKEN with packages:write) and avoids running deploys from
+                           developer machines. -->
+                    <preparationGoals>clean verify</preparationGoals>
                     <goals>verify</goals>
                 </configuration>
             </plugin>
