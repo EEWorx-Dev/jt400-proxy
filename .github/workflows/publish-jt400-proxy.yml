@@ -48,13 +48,16 @@ jobs:
           echo "Authenticated as (redacted for log):"
           npm whoami --registry=https://npm.pkg.github.com 2>&1 | cat || echo "whoami failed (expected if no read permission yet)"
 
+      - name: Set current date environment variable
+        run: echo "CURRENT_DATE=$(date +'%Y%m%d')" >> $GITHUB_ENV
+
       - name: Publish to GitHub Packages
         working-directory: client
         run: |
           # if [ -n "${{ github.event.inputs.version }}" ]; then
           #   npm version ${{ github.event.inputs.version }} --no-git-tag-version
           # fi
-          npm publish --verbose
+          npm publish --verbose --tag "release-$CURRENT_DATE"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # GITHUB_TOKEN is automatically provided by GitHub Actions
