@@ -4,9 +4,13 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>dev.eeworx.mb.utils</groupId>
+    <parent>
+        <groupId>dev.eeworx.utils</groupId>
+        <artifactId>jt400-proxy</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+
     <artifactId>jt400-proxy-server</artifactId>
-    <version>0.1.0-SNAPSHOT</version>
     <packaging>jar</packaging>
 
     <name>jt400-proxy-server</name>
@@ -23,7 +27,7 @@
         <hikaricp.version>5.1.0</hikaricp.version>
         <jackson.version>2.17.2</jackson.version>
 
-        <main.class>dev.eeworx.mb.utils.jt400proxy.Jt400ProxyServer</main.class>
+        <main.class>dev.eeworx.utils.jt400.proxy.Jt400ProxyServer</main.class>
     </properties>
 
     <dependencies>
@@ -154,6 +158,33 @@
                         <live.as400.tests>${env.AS400_LIVE_TESTS}</live.as400.tests>
                     </systemPropertyVariables>
                 </configuration>
+            </plugin>
+
+            <!-- Assembly: creates a ready-to-run distribution tar.gz + zip as additional artifact.
+                 Bound to the package phase so it runs automatically on "mvn package".
+                 The main artifact remains the shaded executable JAR.
+                 The dist gets classifier "dist" (e.g. jt400-proxy-server-0.1.0-dist.tar.gz). -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-assembly-plugin</artifactId>
+                <version>3.6.0</version>
+                <executions>
+                    <execution>
+                        <id>dist</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>single</goal>
+                        </goals>
+                        <configuration>
+                            <descriptors>
+                                <descriptor>src/assembly/dist.xml</descriptor>
+                            </descriptors>
+                            <appendAssemblyId>true</appendAssemblyId>
+                            <attach>true</attach>
+                            <tarLongFileMode>posix</tarLongFileMode>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
     </build>

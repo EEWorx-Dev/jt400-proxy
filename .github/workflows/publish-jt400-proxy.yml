@@ -1,0 +1,109 @@
+name: Publish @eeworx-dev/jt400-proxy (client + server)
+# Single workflow file with multiple jobs: one for the Node/npm client package,
+# one for the Java/Maven server package. Triggered manually or on release:created.
+# Uses direct `npm publish` for client and `mvn deploy` (on tag) for server,
+# per root pom guidance (maven-release-plugin is configured for verify only).
+
+on:
+  workflow_dispatch:
+    # Version is managed manually in client/package.json (or via a separate versioning step).
+    # To re-enable the version input, add it back under inputs.
+
+  release:
+    types: [created]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      # Opt into Node.js 24 runtime for GitHub Actions (checkout, setup-node, etc.)
+      # This addresses the deprecation of Node 20 on GitHub-hosted runners.
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://npm.pkg.github.com'
+          # Use the same major version as your production runtime (Node 24 is current LTS)
+
+      - name: Install dependencies & run tests
+        working-directory: client
+        run: |
+          npm ci
+          npm test
+
+      - name: Debug auth and registry (safe)
+        working-directory: client
+        run: |
+          npm config list --json | grep -E 'registry|//npm.pkg.github.com' || true
+          echo "Authenticated as (redacted for log):"
+          npm whoami --registry=https://npm.pkg.github.com 2>&1 | cat || echo "whoami failed (expected if no read permission yet)"
+
+      - name: Publish to GitHub Packages
+        working-directory: client
+        run: |
+          # if [ -n "${{ github.event.inputs.version }}" ]; then
+          #   npm version ${{ github.event.inputs.version }} --no-git-tag-version
+          # fi
+          npm publish --verbose
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # GITHUB_TOKEN is automatically provided by GitHub Actions
+          # and has permission to publish packages when "packages: write" is granted.
+
+      - name: Print published package info
+        run: |
+          echo "Client package publish step completed (for workflow_dispatch or release)."
+          echo "View packages at: https://github.com/eeworx-dev?tab=packages"
+
+  deploy-server:
+    # Deploy the Maven (Java server) artifact on releases.
+    # This workflow file contains jobs for both the npm client and the Maven server
+    # (per the agreed multi-job approach in a single file).
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Configure Maven settings for GitHub Packages
+        run: |
+          mkdir -p ~/.m2
+          cat > ~/.m2/settings.xml << 'EOF'
+          <settings>
+            <servers>
+              <server>
+                <id>github</id>
+                <password>${{ secrets.GITHUB_TOKEN }}</password>
+              </server>
+            </servers>
+          </settings>
+          EOF
+
+      - name: Deploy server artifact to GitHub Packages
+        # -am builds dependencies if any; -pl limits to the server module
+        run: mvn -B deploy -DskipTests -pl :jt400-proxy-server -am
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

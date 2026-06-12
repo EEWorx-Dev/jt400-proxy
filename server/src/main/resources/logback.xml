@@ -11,5 +11,5 @@
 
     <!-- Hikari and our code at DEBUG if needed for acquisition times -->
     <logger name="com.zaxxer.hikari" level="INFO" />
-    <logger name="dev.eeworx.mb.utils.jt400proxy" level="DEBUG" />
+    <logger name="dev.eeworx.utils.jt400.proxy" level="DEBUG" />
 </configuration>

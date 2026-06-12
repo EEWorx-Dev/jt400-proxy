@@ -23,6 +23,11 @@ yarn-error.log*
 package-lock.json.bak
 *.tgz
 
+# Environment files (never commit secrets)
+.env
+.env.local
+env.bat
+
 # IDE / editors
 .idea/
 *.iml

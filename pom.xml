@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>dev.eeworx.utils</groupId>
+    <artifactId>jt400-proxy</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+    <packaging>pom</packaging>
+
+    <name>jt400-proxy</name>
+    <description>jt400 / AS400 proxy with Java server and Node.js client</description>
+
+    <scm>
+        <connection>scm:git:https://github.com/eeworx-dev/jt400-proxy.git</connection>
+        <developerConnection>scm:git:ssh://git@github.com/eeworx-dev/jt400-proxy.git</developerConnection>
+        <url>https://github.com/eeworx-dev/jt400-proxy</url>
+        <tag>HEAD</tag>
+    </scm>
+
+    <modules>
+        <module>server</module>
+        <!-- client module drives npm install, test, version sync and publish via frontend-maven-plugin -->
+        <module>client</module>
+    </modules>
+
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    </properties>
+
+    <distributionManagement>
+        <!-- Maven artifacts (the server JAR) will be deployed to GitHub Packages -->
+        <repository>
+            <id>github</id>
+            <name>GitHub Packages</name>
+            <url>https://maven.pkg.github.com/eeworx-dev/jt400-proxy</url>
+        </repository>
+    </distributionManagement>
+
+    <build>
+        <plugins>
+            <!-- Maven Release Plugin configuration at root for coordinated releases -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-release-plugin</artifactId>
+                <version>3.0.1</version>
+                <configuration>
+                    <autoVersionSubmodules>true</autoVersionSubmodules>
+                    <useReleaseProfile>false</useReleaseProfile>
+                    <releaseProfiles>release</releaseProfiles>
+                    <!-- We recommend running the actual deploy step in GitHub Actions
+                         rather than as part of mvn release:perform from a developer machine.
+                         Use preparationGoals that stop before deploy, then let the workflow
+                         run "mvn deploy -DskipTests -pl server -am" (and/or client publish). -->
+                    <goals>verify</goals>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>

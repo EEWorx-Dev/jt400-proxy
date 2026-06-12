@@ -264,14 +264,23 @@ The Node client handles correlation by `id` and can have multiple in-flight requ
 
 ### Java (env vars preferred)
 
+Environment variables are the recommended way to configure the Java proxy.
+
+Key variables:
 - `AS400_HOST`, `AS400_USER`, `AS400_PASSWORD` (mandatory)
 - `AS400_DATABASE` (the part after host/ in jdbc:as400://host/db)
 - `AS400_JDBC_PROPS` (optional extra properties string, e.g. ";translate binary=true;...")
 - `PROXY_TCP_PORT` (default 9400)
 - `HIKARI_MAX_POOL_SIZE` (default 20)
 - Other Hikari tuning: `HIKARI_MIN_IDLE`, `HIKARI_CONNECTION_TIMEOUT_MS`, etc.
+- `TX_TIMEOUT_MS`, `TX_SWEEPER_INTERVAL_MS` (for parked transaction lifetime)
 
-See `server/src/main/resources/application.properties.example` (when created).
+**Convenience env file support**:
+- Copy `server/.env.example` → `server/.env` (or `.env.local`)
+- `run.sh` will automatically source it (using `set -a`).
+- On Windows, copy relevant values into `server/env.bat` (see `env.bat.example`). `run.bat` will call it if present.
+
+See `server/src/main/resources/application.properties.example` for the full list and descriptions.
 
 ### Node Client + Facade
 
@@ -284,7 +293,34 @@ See `client/config.example.json`.
 
 ## Building & Running
 
-See `server/run.sh` (or .bat) and the client package.json scripts (when added).
+See `server/scripts/run.sh` (or .bat) and the start/stop wrappers in `server/scripts/`.
+Both the run and start scripts support loading from `.env` / `env.bat` automatically.
+
+### Building a Distribution
+
+To create a ready-to-deploy package (recommended for production use):
+
+```bash
+cd server
+mvn clean package -DskipTests
+```
+
+The assembly is bound to the `package` lifecycle phase, so the distribution is automatically produced as **additional build artifacts**:
+
+- `target/jt400-proxy-server-*-dist.tar.gz`
+- `target/jt400-proxy-server-*-dist.zip`
+
+(The main artifact remains the shaded executable JAR.)
+
+The distribution contains:
+- `bin/` – start/stop scripts and run scripts (copied from `server/scripts/`)
+- `lib/` – the executable shaded JAR (jt400-proxy-server-<version>.jar)
+- `conf/` – example configuration files
+- `logs/` – empty directory for runtime logs
+
+See `README.md` (the README-dist.md is renamed to README.md at the root of the dist archive via the assembly descriptor) for distribution-specific instructions.
+
+See also the helper script `server/setup-pm2-logrotate.js` (for the Node side of bb2-server-node).
 
 Recommended JVM: `-Xms512m -Xmx2g` (or higher if you have very large result sets or many pools).
 
@@ -351,9 +387,17 @@ All verification steps from the plan (build, framing self-test, integrated Java+
 ```bash
 # Terminal 1 - Java (will warn about pool but still export the TCP endpoint)
 cd server
+
+# Option A: export variables directly
 export AS400_HOST=127.0.0.1 AS400_USER=dummy AS400_PASSWORD=dummy AS400_DATABASE=FAKE PROXY_TCP_PORT=19400
+
+# Option B: use env file (recommended for local work)
+# cp .env.example .env
+# edit .env with your values
+# scripts/run.sh will source it automatically
+
 mvn clean package -DskipTests -q
-./run.sh
+./scripts/run.sh
 
 # Terminal 2 - Node client talks to it over duplex TCP
 cd ../client
@@ -393,7 +437,7 @@ npm publish
 ```
 
 **Tips for your environment**:
-- If this is internal-only, publish as a **scoped package** (`@eeworx-dev/jt400-proxy-client`) and use `--access restricted`.
+- Publish as a **public scoped package** (`@eeworx-dev/jt400-proxy-client`) on GitHub Packages. The source repository can remain private.
 - Or run a private Verdaccio / Artifactory / GitHub Packages registry and point `.npmrc` at it.
 - The `package.json` already has a `"files"` field and `"prepublishOnly": "npm test"` hook to keep the published tarball clean.
 - After publishing, anyone (or any project) can do `npm install @eeworx-dev/jt400-proxy-client`.
@@ -468,5 +512,3 @@ For a real AS/400, set the proper `AS400_*` variables (and optionally `HIKARI_*`
 See the individual `server/` and `client/` README sections (or the source headers) for more.
 
 ---
-
-See the detailed plan at the session plan.md for the original design rationale, class sketches, incremental order, and full verification strategy.

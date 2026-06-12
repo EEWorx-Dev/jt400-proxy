@@ -1,0 +1,66 @@
+<assembly xmlns="http://maven.apache.org/ASSEMBLY/2.2.0"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/ASSEMBLY/2.2.0 http://maven.apache.org/xsd/assembly-2.2.0.xsd">
+    <id>dist</id>
+    <formats>
+        <format>tar.gz</format>
+        <format>zip</format>
+    </formats>
+
+    <fileSets>
+        <!-- Scripts go to bin/ with executable permissions -->
+        <fileSet>
+            <directory>${project.basedir}/scripts</directory>
+            <outputDirectory>bin</outputDirectory>
+            <includes>
+                <include>*.sh</include>
+                <include>*.bat</include>
+            </includes>
+            <fileMode>0755</fileMode>
+        </fileSet>
+
+        <!-- Configuration examples -->
+        <fileSet>
+            <directory>${project.basedir}</directory>
+            <outputDirectory>conf</outputDirectory>
+            <includes>
+                <include>.env.example</include>
+                <include>env.bat.example</include>
+                <include>src/main/resources/application.properties.example</include>
+                <include>src/main/resources/logback.xml</include>
+            </includes>
+        </fileSet>
+
+        <!-- The executable shaded JAR (versioned name as included from target) -->
+        <fileSet>
+            <directory>${project.build.directory}</directory>
+            <outputDirectory>lib</outputDirectory>
+            <includes>
+                <include>jt400-proxy-server-*.jar</include>
+            </includes>
+            <fileMode>0644</fileMode>
+        </fileSet>
+
+        <!-- Empty logs directory -->
+        <fileSet>
+            <directory>${project.basedir}</directory>
+            <outputDirectory>logs</outputDirectory>
+            <excludes>
+                <exclude>**/*</exclude>
+            </excludes>
+        </fileSet>
+    </fileSets>
+
+    <!-- Top-level README for the distribution.
+         Using <files><file> (with <destName>) for single-file renaming, as shown in the Maven docs.
+         This renames README-dist.md → README.md at the root of the archive.
+         (We can still combine with <fileSet> for other things if needed.) -->
+    <files>
+        <file>
+            <source>${project.basedir}/README-dist.md</source>
+            <outputDirectory>.</outputDirectory>
+            <destName>README.md</destName>
+            <fileMode>0644</fileMode>
+        </file>
+    </files>
+</assembly>
