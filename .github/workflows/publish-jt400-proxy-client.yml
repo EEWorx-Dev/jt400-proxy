@@ -51,9 +51,9 @@ jobs:
       - name: Publish to GitHub Packages
         working-directory: client
         run: |
-          if [ -n "${{ github.event.inputs.version }}" ]; then
-            npm version ${{ github.event.inputs.version }} --no-git-tag-version
-          fi
+          # if [ -n "${{ github.event.inputs.version }}" ]; then
+          #   npm version ${{ github.event.inputs.version }} --no-git-tag-version
+          # fi
           npm publish --verbose
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
