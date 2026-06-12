@@ -63,7 +63,10 @@
                     </execution>
 
                     <!-- Sync Maven version to package.json during release prepare -->
-                    <!-- The maven-release-plugin updates the pom version first -->
+                    <!-- The maven-release-plugin updates the pom version first.
+                         A follow-up exec-maven-plugin execution (below) does "git add" on
+                         package.json + package-lock.json so that release:prepare will
+                         actually commit them (otherwise they are often skipped). -->
                     <execution>
                         <id>npm-version</id>
                         <goals>
@@ -85,6 +88,38 @@
                         <phase>deploy</phase>
                         <configuration>
                             <arguments>publish --access public</arguments>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- Exec plugin: ensures that package.json + package-lock.json
+                 (updated by the "npm version" execution above during release:prepare)
+                 are explicitly staged so the maven-release-plugin will commit them.
+                 Without this, release:prepare often only commits the POM files
+                 and skips the Node package files (known gotcha). -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.2.0</version>
+                <executions>
+                    <execution>
+                        <id>git-add-package-files-for-release</id>
+                        <goals>
+                            <goal>exec</goal>
+                        </goals>
+                        <phase>prepare-package</phase>
+                        <configuration>
+                            <executable>git</executable>
+                            <arguments>
+                                <argument>add</argument>
+                                <argument>package.json</argument>
+                                <argument>package-lock.json</argument>
+                            </arguments>
+                            <!-- Fail the build if git add fails (e.g. not a git repo) -->
+                            <successCodes>
+                                <successCode>0</successCode>
+                            </successCodes>
                         </configuration>
                     </execution>
                 </executions>

@@ -57,9 +57,20 @@
                            is done by this repo's GitHub Actions workflow on the release event
                            (see .github/workflows/publish-jt400-proxy.yml). This centralizes auth
                            (GITHUB_TOKEN with packages:write) and avoids running deploys from
-                           developer machines. -->
+                           developer machines.
+
+                         Note on package.json / package-lock.json:
+                         The frontend-maven-plugin updates them during prepare-package (part of
+                         clean verify). We also run "git add" on them via exec-maven-plugin in the
+                         same phase so that the release plugin's commit will include them.
+                         Without the explicit git add, release:prepare commonly only commits the
+                         POMs and skips the Node package files (this exact gotcha). -->
                     <preparationGoals>clean verify</preparationGoals>
                     <goals>verify</goals>
+                    <!-- commitByProject=true helps ensure that changes made inside
+                         sub-modules (e.g. client/package.json updated by frontend-maven-plugin)
+                         are committed as part of the release prepare. -->
+                    <commitByProject>true</commitByProject>
                 </configuration>
             </plugin>
         </plugins>
