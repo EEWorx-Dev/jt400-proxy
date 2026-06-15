@@ -2,7 +2,7 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>dev.eeworx.utils</groupId>
+    <groupId>dev.eeworx.utils.jt400</groupId>
     <artifactId>jt400-proxy</artifactId>
     <version>0.1.3-SNAPSHOT</version>
     <packaging>pom</packaging>
@@ -21,6 +21,8 @@
         <module>server</module>
         <!-- client module drives npm install, test, version sync and publish via frontend-maven-plugin -->
         <module>client</module>
+        <!-- dist module gathers the self-contained client and server dists into a combined distributable -->
+        <module>dist</module>
     </modules>
 
     <properties>
@@ -73,6 +75,7 @@
                     <commitByProject>true</commitByProject>
                 </configuration>
             </plugin>
+
         </plugins>
     </build>
 

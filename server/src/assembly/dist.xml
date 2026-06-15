@@ -7,6 +7,12 @@
         <format>zip</format>
     </formats>
 
+    <!-- Make the dist archive "flat" (files at root of tar, no wrapper dir).
+         This ensures that when the full-dist module unpacks it via moduleSet,
+         the contents land directly under server/ without a redundant
+         jt400-proxy-server-VERSION/ subfolder. -->
+    <baseDirectory></baseDirectory>
+
     <fileSets>
         <!-- Scripts go to bin/ with executable permissions -->
         <fileSet>
@@ -26,9 +32,17 @@
             <includes>
                 <include>.env.example</include>
                 <include>env.bat.example</include>
-                <include>src/main/resources/application.properties.example</include>
-                <include>src/main/resources/logback.xml</include>
             </includes>
+        </fileSet>
+        
+        <fileSet>
+            <directory>src/main/resources</directory>
+            <outputDirectory>conf</outputDirectory>
+            <includes>
+                <include>application.properties.example</include>
+                <include>logback.xml</include>
+            </includes>
+              
         </fileSet>
 
         <!-- The executable shaded JAR (versioned name as included from target) -->

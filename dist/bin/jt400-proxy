@@ -1,0 +1,249 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# jt400-proxy - Top level dispatcher for the combined jt400-proxy distribution.
+#
+# Usage examples:
+#   jt400-proxy server start
+#   jt400-proxy server restart
+#   jt400-proxy server logs
+#   jt400-proxy client start --port 4000 --proxy-host 10.0.0.42
+#   jt400-proxy client pm2-start --env production
+#   jt400-proxy client pm2-logs
+#   jt400-proxy client stats
+#
+# This script lives in the root bin/ of the full distributable.
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DIST_ROOT="$(dirname "$SCRIPT_DIR")"
+
+# Auto-extract inner dist archives if the expanded dirs are missing.
+# This lets the full-dist ship the self-contained sub-dists while still
+# giving the user the nice "server/" and "client/" expanded layout after
+# one tar extraction + first use of the dispatcher.
+maybe_extract() {
+  local subdir="$1"
+  local tar_glob="$2"
+  if [[ -d "$DIST_ROOT/$subdir" && -f "$DIST_ROOT/$subdir"/*-dist.* ]]; then
+    # already expanded or the tar is inside the subdir (old layout)
+    return
+  fi
+  # Look for the dist tar in the subdir (the layout we ship in full-dist)
+  local tarball
+  tarball=$(ls "$DIST_ROOT/$subdir"/*-dist.tar.gz 2>/dev/null | head -1 || true)
+  if [[ -n "$tarball" && ! -d "$DIST_ROOT/$subdir/bin" ]]; then
+    echo "First use: extracting $(basename "$tarball") into $subdir/ ..."
+    mkdir -p "$DIST_ROOT/$subdir"
+    tar -xzf "$tarball" -C "$DIST_ROOT/$subdir" --strip-components=1
+  fi
+}
+
+maybe_extract server "server/*-dist.tar.gz"
+maybe_extract client "client/*-client-dist.tar.gz"
+
+COMPONENT="${1:-}"
+shift || true
+
+case "$COMPONENT" in
+  server|s)
+    SERVER_DIR="$DIST_ROOT/server"
+    if [[ ! -d "$SERVER_DIR" ]]; then
+      echo "Error: server/ directory not found in this distribution" >&2
+      exit 1
+    fi
+
+    SUBCMD="${1:-}"
+    shift || true
+
+    case "$SUBCMD" in
+      start)  exec "$SERVER_DIR/bin/start.sh" "$@";;
+      stop)   exec "$SERVER_DIR/bin/stop.sh" "$@";;
+      restart)
+        "$SERVER_DIR/bin/stop.sh" || true
+        sleep 1
+        exec "$SERVER_DIR/bin/start.sh" "$@"
+        ;;
+      run)
+        if [[ -x "$SERVER_DIR/bin/run.sh" ]]; then
+          exec "$SERVER_DIR/bin/run.sh" "$@"
+        else
+          exec "$SERVER_DIR/bin/start.sh" "$@"
+        fi
+        ;;
+      status|pid)
+        PIDFILE="$SERVER_DIR/logs/proxy.pid"
+        if [[ -f "$PIDFILE" ]]; then
+          cat "$PIDFILE"
+        else
+          echo "No running server (no $PIDFILE)" >&2
+          exit 1
+        fi
+        ;;
+      logs)
+        LOGFILE="$SERVER_DIR/logs/proxy.out"
+        if [[ -f "$LOGFILE" ]]; then
+          exec tail -f "$LOGFILE"
+        else
+          echo "No log file found at $LOGFILE" >&2
+          exit 1
+        fi
+        ;;
+      *)
+        echo "Unknown 'server' subcommand: $SUBCMD" >&2
+        echo "Supported: start, stop, restart, run, status, logs" >&2
+        exit 1
+        ;;
+    esac
+    ;;
+
+  client|c)
+    CLIENT_DIR="$DIST_ROOT/client"
+    if [[ ! -d "$CLIENT_DIR" ]]; then
+      echo "Error: client/ directory not found in this distribution" >&2
+      exit 1
+    fi
+
+    SUBCMD="${1:-}"
+    shift || true
+
+    case "$SUBCMD" in
+      start)
+        cd "$CLIENT_DIR"
+        exec node bin/cli.js "$@"
+        ;;
+      stop)
+        # Prefer PM2 if the process is managed by it
+        if pm2 list 2>/dev/null | grep -q jt400-proxy-client; then
+          exec pm2 stop jt400-proxy-client || true
+        else
+          # Try to kill process listening on the facade HTTP port
+          PORT="${JT400_FACADE_HTTP_PORT:-${1:-3456}}"
+          if command -v lsof >/dev/null 2>&1; then
+            PIDS=$(lsof -ti :$PORT 2>/dev/null || true)
+            if [[ -n "$PIDS" ]]; then
+              echo "Stopping process(es) on port $PORT: $PIDS"
+              kill $PIDS 2>/dev/null || true
+              sleep 1
+              # Force kill if still alive
+              kill -9 $PIDS 2>/dev/null || true
+            else
+              echo "No process found listening on port $PORT"
+            fi
+          elif command -v fuser >/dev/null 2>&1; then
+            fuser -k ${PORT}/tcp 2>/dev/null || true
+          else
+            echo "Cannot auto-stop direct client (lsof or fuser required). Kill manually or use PM2." >&2
+            exit 1
+          fi
+        fi
+        ;;
+      pm2-start)
+        # Use the bundled ecosystem.
+        # --update-env makes PM2 inherit/merge the current shell's environment variables
+        # (JT400_PROXY_HOST, LOG_LEVEL, etc.). This is "environment variable passthrough".
+        exec pm2 start "$CLIENT_DIR/ecosystem.config.js" --cwd "$CLIENT_DIR" --update-env "$@"
+        ;;
+      pm2-stop)
+        exec pm2 stop jt400-proxy-client || true
+        ;;
+      pm2-restart)
+        exec pm2 restart jt400-proxy-client || true
+        ;;
+      pm2-logs)
+        exec pm2 logs jt400-proxy-client --lines 100 "$@"
+        ;;
+      restart)
+        # Prefer PM2 if the process is managed by it, otherwise fall back to direct
+        if pm2 list 2>/dev/null | grep -q jt400-proxy-client; then
+          exec pm2 restart jt400-proxy-client || true
+        else
+          "$0" client stop 2>/dev/null || true
+          sleep 1
+          exec "$0" client start "$@"
+        fi
+        ;;
+      logs)
+        # If PM2 is managing it, use pm2 logs; else tail common log locations
+        if pm2 list 2>/dev/null | grep -q jt400-proxy-client; then
+          exec pm2 logs jt400-proxy-client --lines 100 "$@"
+        else
+          # Try direct CLI logs or the ecosystem default logs dir
+          if [[ -d "$CLIENT_DIR/logs" ]]; then
+            exec tail -f "$CLIENT_DIR/logs"/*.log 2>/dev/null || tail -f "$CLIENT_DIR/logs/jt400-proxy-out.log"
+          else
+            echo "No PM2 process and no logs/ dir found. Try 'jt400-proxy client pm2-logs' or start with PM2." >&2
+            exit 1
+          fi
+        fi
+        ;;
+      stats)
+        # Optional port as first remaining arg
+        PORT="${JT400_FACADE_HTTP_PORT:-${1:-3456}}"
+        HOST="${JT400_FACADE_HOST:-127.0.0.1}"
+        URL="http://${HOST}:${PORT}/stats"
+
+        if command -v curl >/dev/null 2>&1; then
+          if command -v jq >/dev/null 2>&1; then
+            curl -sS "$URL" | jq .
+          else
+            curl -sS "$URL"
+          fi
+        else
+          echo "Error: 'client stats' requires curl (and optionally jq)" >&2
+          exit 1
+        fi
+        ;;
+      help|--help|-h)
+        echo "jt400-proxy client commands:"
+        echo "  start [options]     Start the standalone HTTP facade directly (see client --help)"
+        echo "  stop [port]         Stop the client (PM2 if active, otherwise kill by port)"
+        echo "  pm2-start [...]     Start via PM2 using the bundled ecosystem.config.js (inherits current env vars via --update-env)"
+        echo "  pm2-stop            Stop the PM2-managed client"
+        echo "  pm2-restart         Restart the PM2-managed client"
+        echo "  pm2-logs            Show PM2 logs for the client"
+        echo "  restart             Restart (PM2 if active, otherwise direct)"
+        echo "  logs                Show logs (PM2 if active, otherwise tail)"
+        echo "  stats [port]        Fetch /stats from the running facade (default 3456)"
+        echo ""
+        echo "All other flags for 'start' are forwarded to the client CLI."
+        (cd "$CLIENT_DIR" && node bin/cli.js --help || true)
+        ;;
+      *)
+        echo "Unknown 'client' subcommand: $SUBCMD" >&2
+        echo "Supported: start, pm2-start, pm2-stop, pm2-restart, pm2-logs, restart, logs, stats, help" >&2
+        exit 1
+        ;;
+    esac
+    ;;
+
+  *)
+    cat <<EOF
+jt400-proxy - Unified command for the jt400-proxy distribution
+
+Usage:
+  jt400-proxy server <subcommand> [args...]
+  jt400-proxy client <subcommand> [args...]
+
+Server subcommands:
+  start, stop, restart, run, status, logs
+
+Client subcommands:
+  start, stop, pm2-start (with env passthrough), pm2-stop, pm2-restart, pm2-logs, restart, logs, stats, help
+
+Examples:
+  jt400-proxy server start
+  jt400-proxy server restart
+  jt400-proxy server logs
+  jt400-proxy client start --port 4000
+  jt400-proxy client stop
+  jt400-proxy client pm2-start --env production
+  jt400-proxy client pm2-logs
+  jt400-proxy client stats
+  jt400-proxy client stats 4000
+
+The dispatcher lives at the root of the full distributable.
+Add its parent 'bin' directory to your PATH for convenience.
+EOF
+    exit 1
+    ;;
+esac

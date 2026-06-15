@@ -1,0 +1,80 @@
+<assembly xmlns="http://maven.apache.org/ASSEMBLY/2.2.0"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/ASSEMBLY/2.2.0 http://maven.apache.org/xsd/assembly-2.2.0.xsd">
+    <id>dist</id>
+    <formats>
+        <format>tar.gz</format>
+        <format>zip</format>
+    </formats>
+
+    <!-- Make the client-dist archive "flat" so that when unpacked by the
+         full-dist module's moduleSet, contents land directly under client/
+         without a redundant jt400-proxy-client-VERSION/ wrapper. -->
+    <baseDirectory></baseDirectory>
+
+    <fileSets>
+        <!-- Client JavaScript sources and bin (the "app" code) -->
+        <fileSet>
+            <directory>${project.basedir}</directory>
+            <outputDirectory>.</outputDirectory>
+            <includes>
+                <include>index.js</include>
+                <include>facade.js</include>
+                <include>lib/**</include>
+                <include>bin/**</include>
+                <include>package.json</include>
+            </includes>
+            <fileMode>0644</fileMode>
+        </fileSet>
+
+        <!-- Make bin/cli.js executable -->
+        <fileSet>
+            <directory>${project.basedir}/bin</directory>
+            <outputDirectory>bin</outputDirectory>
+            <includes>
+                <include>cli.js</include>
+            </includes>
+            <fileMode>0755</fileMode>
+        </fileSet>
+
+        <!-- Configuration examples and PM2 support -->
+        <fileSet>
+            <directory>${project.basedir}</directory>
+            <outputDirectory>conf</outputDirectory>
+            <includes>
+                <include>config.example.json</include>
+                <include>ecosystem.config.js</include>
+            </includes>
+            <fileMode>0644</fileMode>
+        </fileSet>
+
+        <!-- Examples -->
+        <fileSet>
+            <directory>${project.basedir}</directory>
+            <outputDirectory>examples</outputDirectory>
+            <includes>
+                <include>example-direct.js</include>
+            </includes>
+            <fileMode>0644</fileMode>
+        </fileSet>
+
+        <!-- Empty logs directory -->
+        <fileSet>
+            <directory>${project.basedir}</directory>
+            <outputDirectory>logs</outputDirectory>
+            <excludes>
+                <exclude>**/*</exclude>
+            </excludes>
+        </fileSet>
+    </fileSets>
+
+    <!-- Top-level README for the client distribution (renamed) -->
+    <files>
+        <file>
+            <source>${project.basedir}/README-dist.md</source>
+            <outputDirectory>.</outputDirectory>
+            <destName>README.md</destName>
+            <fileMode>0644</fileMode>
+        </file>
+    </files>
+</assembly>

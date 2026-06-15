@@ -1,0 +1,69 @@
+<assembly xmlns="http://maven.apache.org/ASSEMBLY/2.2.0"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/ASSEMBLY/2.2.0 https://maven.apache.org/xsd/assembly-2.2.0.xsd">
+
+    <id>full-dist</id>
+    <formats>
+        <format>tar.gz</format>
+        <format>zip</format>
+    </formats>
+    
+
+<!--    <moduleSets>
+        <moduleSet>
+            <useAllReactorProjects>true</useAllReactorProjects>
+            <includes>
+                <include>${project.groupId}:jt400-proxy-server:tar.gz</include>
+            </includes>
+            <binaries>
+                <attachmentClassifier>dist</attachmentClassifier>
+                <unpack>true</unpack>
+                <outputDirectory>server</outputDirectory>
+                <includeDependencies>false</includeDependencies>
+            </binaries>
+        </moduleSet>
+    </moduleSets>-->
+
+    <!-- Client is pom-packaged; use dependencySet (the dist module explicitly depends on the client-dist artifact).
+         moduleSet binaries doesn't reliably pick attachments from pom-packaged modules. -->
+    <dependencySets>
+        <dependencySet>
+            <useProjectArtifact>false</useProjectArtifact>
+            <includes>
+                <include>${project.groupId}:jt400-proxy-client:tar.gz</include>
+            </includes>
+            <unpack>true</unpack>
+            <outputDirectory>client</outputDirectory>
+            <useTransitiveDependencies>false</useTransitiveDependencies>
+        </dependencySet>
+        <dependencySet>
+            <includes>
+                <include>${project.groupId}:jt400-proxy-server:tar.gz:dist</include>
+            </includes>
+            <unpack>true</unpack>
+            <outputDirectory>server</outputDirectory>
+            <useTransitiveDependencies>false</useTransitiveDependencies>
+        </dependencySet>
+    </dependencySets>
+
+    <!-- Top-level dispatcher (local to dist/bin) and README -->
+    <fileSets>
+        <fileSet>
+            <directory>${project.basedir}/bin</directory>
+            <outputDirectory>bin</outputDirectory>
+            <includes>
+                <include>jt400-proxy</include>
+                <include>jt400-proxy.bat</include>
+            </includes>
+            <fileMode>0755</fileMode>
+        </fileSet>
+
+        <fileSet>
+            <directory>${project.basedir}/..</directory>
+            <outputDirectory>.</outputDirectory>
+            <includes>
+                <include>README.md</include>
+            </includes>
+        </fileSet>
+    </fileSets>
+</assembly>

@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>dev.eeworx.utils.jt400</groupId>
+        <artifactId>jt400-proxy</artifactId>
+        <version>0.1.3-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>jt400-proxy-dist</artifactId>
+    <packaging>pom</packaging>
+
+    <name>jt400-proxy-dist</name>
+    <description>Combined distributable for jt400-proxy (client + server)</description>
+
+    <dependencies>
+        <!-- Depend on the server dist artifact (classified) so the assembly can include/unpack it -->
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>jt400-proxy-server</artifactId>
+            <version>${project.version}</version>
+            <classifier>dist</classifier>
+            <type>tar.gz</type>
+        </dependency>
+
+        <!-- Depend on the client dist artifact (classified) -->
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>jt400-proxy-client</artifactId>
+            <version>${project.version}</version>
+            <type>tar.gz</type>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!-- Assembly plugin gathers the pre-built dist artifacts from the dependent
+                 modules using moduleSets + binaries + unpack. This is the clean way
+                 that respects reactor ordering (server/client built before dist). -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-assembly-plugin</artifactId>
+                <version>3.6.0</version>
+                <executions>
+                    <execution>
+                        <id>dist</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>single</goal>
+                        </goals>
+                        <configuration>
+                            <useProjectArtifact>false</useProjectArtifact>
+                            <descriptors>
+                                <descriptor>src/assembly/full-dist.xml</descriptor>
+                            </descriptors>
+                            <appendAssemblyId>true</appendAssemblyId>
+                            <attach>true</attach>
+                            <tarLongFileMode>posix</tarLongFileMode>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>
