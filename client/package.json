@@ -12,6 +12,7 @@
     "jt400-proxy-client": "bin/cli.js"
   },
   "files": [
+    "facade.js",
     "index.js",
     "lib/",
     "bin/",
@@ -50,6 +51,9 @@
   "devDependencies": {
     "supertest": "^6.3.4"
   },
+  "bundledDependencies": [
+    "express"
+  ],
   "engines": {
     "node": ">=18"
   }

@@ -8,34 +8,7 @@
         <format>zip</format>
     </formats>
     
-
-<!--    <moduleSets>
-        <moduleSet>
-            <useAllReactorProjects>true</useAllReactorProjects>
-            <includes>
-                <include>${project.groupId}:jt400-proxy-server:tar.gz</include>
-            </includes>
-            <binaries>
-                <attachmentClassifier>dist</attachmentClassifier>
-                <unpack>true</unpack>
-                <outputDirectory>server</outputDirectory>
-                <includeDependencies>false</includeDependencies>
-            </binaries>
-        </moduleSet>
-    </moduleSets>-->
-
-    <!-- Client is pom-packaged; use dependencySet (the dist module explicitly depends on the client-dist artifact).
-         moduleSet binaries doesn't reliably pick attachments from pom-packaged modules. -->
     <dependencySets>
-        <dependencySet>
-            <useProjectArtifact>false</useProjectArtifact>
-            <includes>
-                <include>${project.groupId}:jt400-proxy-client:tar.gz</include>
-            </includes>
-            <unpack>true</unpack>
-            <outputDirectory>client</outputDirectory>
-            <useTransitiveDependencies>false</useTransitiveDependencies>
-        </dependencySet>
         <dependencySet>
             <includes>
                 <include>${project.groupId}:jt400-proxy-server:tar.gz:dist</include>
@@ -65,5 +38,15 @@
                 <include>README.md</include>
             </includes>
         </fileSet>
+
+        <!-- use the exploded dir by dependency plugin -->
+        <fileSet>
+            <directory>${project.build.directory}/client</directory>
+            <outputDirectory>/client</outputDirectory>
+            <includes>
+                <include>**/*</include>
+            </includes>
+        </fileSet>
+
     </fileSets>
 </assembly>

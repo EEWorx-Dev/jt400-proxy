@@ -31,15 +31,45 @@
             <groupId>${project.groupId}</groupId>
             <artifactId>jt400-proxy-client</artifactId>
             <version>${project.version}</version>
-            <type>tar.gz</type>
+            <type>tgz</type>
         </dependency>
     </dependencies>
 
     <build>
         <plugins>
+            <!-- 1. Unpack the tgz and slice away the 'package/' prefix -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <version>3.6.1</version>
+                <executions>
+                    <execution>
+                        <id>unpack-proxy-client</id>
+                        <phase>prepare-package</phase>
+                        <goals>
+                            <goal>unpack-dependencies</goal>
+                        </goals>
+                        <configuration>
+                            <!-- Target your specific Express artifact -->
+                            <includeArtifactIds>jt400-proxy-client</includeArtifactIds>
+                            <includeTypes>tgz</includeTypes>
+                            <outputDirectory>${project.build.directory}/client</outputDirectory>
+                        
+                            <!-- The regex magic that drops the 'package/' folder -->
+                            <fileMappers>
+                                <fileMapper implementation="org.codehaus.plexus.components.io.filemappers.RegExpFileMapper">
+                                    <pattern>^package/(.*)$</pattern>
+                                    <replacement>$1</replacement>
+                                </fileMapper>
+                            </fileMappers>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+                        
             <!-- Assembly plugin gathers the pre-built dist artifacts from the dependent
-                 modules using moduleSets + binaries + unpack. This is the clean way
-                 that respects reactor ordering (server/client built before dist). -->
+            modules using moduleSets + binaries + unpack. This is the clean way
+            that respects reactor ordering (server/client built before dist). -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-assembly-plugin</artifactId>
@@ -52,7 +82,6 @@
                             <goal>single</goal>
                         </goals>
                         <configuration>
-                            <useProjectArtifact>false</useProjectArtifact>
                             <descriptors>
                                 <descriptor>src/assembly/full-dist.xml</descriptor>
                             </descriptors>

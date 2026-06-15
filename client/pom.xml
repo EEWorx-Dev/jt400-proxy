@@ -14,6 +14,33 @@
     <name>jt400-proxy-client</name>
     <description>Node.js client for jt400-proxy-server (library + HTTP facade)</description>
 
+    <profiles>
+        <profile>
+            <id>publish-to-npm</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>com.github.eirslett</groupId>
+                        <artifactId>frontend-maven-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>npm-publish-registry</id>
+                                <!-- Binds to the deploy phase so it runs when you execute 'mvn deploy' -->
+                                <phase>deploy</phase> 
+                                <goals>
+                                    <goal>npm</goal>
+                                </goals>
+                                <configuration>
+                                    <arguments>publish</arguments>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
+
     <build>
         <plugins>
             <!-- Frontend Maven Plugin: handles Node.js / npm lifecycle inside Maven -->
@@ -64,9 +91,9 @@
 
                     <!-- Sync Maven version to package.json during release prepare -->
                     <!-- The maven-release-plugin updates the pom version first.
-                         A follow-up exec-maven-plugin execution (below) does "git add" on
-                         package.json + package-lock.json so that release:prepare will
-                         actually commit them (otherwise they are often skipped). -->
+                    A follow-up exec-maven-plugin execution (below) does "git add" on
+                    package.json + package-lock.json so that release:prepare will
+                    actually commit them (otherwise they are often skipped). -->
                     <execution>
                         <id>npm-version</id>
                         <goals>
@@ -78,26 +105,48 @@
                         </configuration>
                     </execution>
 
-                    <!-- Publish to GitHub Packages (or npmjs) during deploy phase -->
-                    <!-- This runs as part of "mvn deploy" / release:perform -->
                     <execution>
-                        <id>npm-publish</id>
+                        <id>npm-pack</id>
                         <goals>
                             <goal>npm</goal>
                         </goals>
-                        <phase>deploy</phase>
+                        <phase>package</phase>
                         <configuration>
-                            <arguments>publish --access public</arguments>
+                            <arguments>pack --pack-destination=${project.build.directory}</arguments>
                         </configuration>
                     </execution>
                 </executions>
             </plugin>
 
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>build-helper-maven-plugin</artifactId>
+                <version>3.6.0</version>
+                <executions>
+                    <execution>
+                        <id>attach-frontend-tarball</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>attach-artifact</goal>
+                        </goals>
+                        <configuration>
+                            <artifacts>
+                                <artifact>
+                                    <file>${project.build.directory}/eeworx-dev-${project.artifactId}-${project.version}.tgz</file> 
+                                    <type>tgz</type>
+                                </artifact>
+                            </artifacts>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            
+            
             <!-- Exec plugin: ensures that package.json + package-lock.json
-                 (updated by the "npm version" execution above during release:prepare)
-                 are explicitly staged so the maven-release-plugin will commit them.
-                 Without this, release:prepare often only commits the POM files
-                 and skips the Node package files (known gotcha). -->
+            (updated by the "npm version" execution above during release:prepare)
+            are explicitly staged so the maven-release-plugin will commit them.
+            Without this, release:prepare often only commits the POM files
+            and skips the Node package files (known gotcha). -->
             <plugin>
                 <groupId>org.codehaus.mojo</groupId>
                 <artifactId>exec-maven-plugin</artifactId>
@@ -124,36 +173,6 @@
                     </execution>
                 </executions>
             </plugin>
-
-            <!-- Assembly for client distributable.
-                 Produces jt400-proxy-client-*-client-dist.tar.gz / .zip
-                 (parallel to the server dist).
-                 Contains the client code, bin, examples, PM2 config, etc.
-                 Bound to package phase. -->
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-assembly-plugin</artifactId>
-                <extensions>true</extensions>
-                <version>3.6.0</version>
-                <executions>
-                    <execution>
-                        <id>client-dist</id>
-                        <phase>package</phase>
-                        <goals>
-                            <goal>single</goal>
-                        </goals>
-                        <configuration>
-                            <descriptors>
-                                <descriptor>src/assembly/dist.xml</descriptor>
-                            </descriptors>
-                            <appendAssemblyId>false</appendAssemblyId>
-                            <attach>true</attach>
-                            <tarLongFileMode>posix</tarLongFileMode>
-                        </configuration>
-                    </execution>
-                </executions>
-            </plugin>
         </plugins>
     </build>
-
 </project>
