@@ -17,8 +17,8 @@ if "%BASENAME%"=="scripts" (
 cd /d %SERVER_ROOT%
 
 REM Load env.bat if present
-if exist env.bat (
-  call env.bat
+if exist conf\env.bat (
+  call conf\env.bat
 )
 
 REM Locate JAR
