@@ -218,6 +218,56 @@ describe('Jt400ProxyClient (with mock server)', () => {
     client.close();
   });
 
+  it('client.transaction() returns a handle that auto-injects txId (no manual options needed)', async () => {
+    const client = new Jt400ProxyClient({
+      host: '127.0.0.1',
+      port,
+      numLinks: 1,
+      requestTimeoutMs: 2000,
+    });
+    await client.connect();
+
+    const handle = await client.transaction();
+    assert.ok(handle);
+    assert.ok(handle.txId);
+    assert.ok(handle.query);
+    assert.ok(handle.execute);
+    assert.ok(handle.commit);
+    assert.ok(handle.rollback);
+
+    // Using the handle should include txId internally
+    const rows = await handle.query('SELECT 1');
+    assert.equal(rows.length, 1);
+
+    const execRes = await handle.execute('UPDATE foo SET x=1');
+    assert.equal(execRes.affectedRows, 1);
+
+    const cRes = await handle.commit();
+    assert.equal(cRes.status, 'committed');
+
+    client.close();
+  });
+
+  it('client.transaction(fn) invokes callback with handle and supports rollback on sync throw', async () => {
+    const client = new Jt400ProxyClient({ host: '127.0.0.1', port, numLinks: 1 });
+    await client.connect();
+
+    let sawHandle = false;
+    let threw = false;
+    try {
+      await client.transaction((tx) => {
+        sawHandle = !!tx && !!tx.txId;
+        throw new Error('boom in tx fn');
+      });
+    } catch (e) {
+      threw = /boom/.test(e.message);
+    }
+    assert.equal(sawHandle, true);
+    assert.equal(threw, true);
+
+    client.close();
+  });
+
   it('getPoolStats returns transactions info with startTime and lastUsed (last-activity model)', async () => {
     const client = new Jt400ProxyClient({
       host: '127.0.0.1',

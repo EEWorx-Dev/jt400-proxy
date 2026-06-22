@@ -3,6 +3,36 @@
 const FramedDuplexLink = require('./lib/FramedDuplexLink');
 
 /**
+ * Transaction handle returned by client.transaction() / adapter.
+ * Encapsulates a txId so callers do not need to manually pass {txId}
+ * on every query/execute. This provides a more ergonomic API and
+ * centralizes the tx "wrapping" logic (deduplicating createTxHandle
+ * copies that existed in consuming adapters).
+ */
+class Transaction {
+  constructor(client, txId) {
+    this.client = client;
+    this.txId = txId;
+  }
+
+  query(sql, params = []) {
+    return this.client.query(sql, params, { txId: this.txId });
+  }
+
+  execute(sql, params = []) {
+    return this.client.execute(sql, params, { txId: this.txId });
+  }
+
+  commit() {
+    return this.client.commit(this.txId);
+  }
+
+  rollback() {
+    return this.client.rollback(this.txId);
+  }
+}
+
+/**
  * High-level facade over one or more duplex links to the Java jt400-proxy.
  * Provides query(sql, params) and execute(sql, params) that return friendly values.
  *
@@ -86,6 +116,10 @@ class Jt400ProxyClient {
     const l = this.links[this.rrIndex % this.links.length];
     this.rrIndex = (this.rrIndex + 1) % this.links.length;
     return l;
+  }
+
+  _txOptions(options = {}) {
+    return options.txId ? { txId: options.txId } : {};
   }
 
   /**
@@ -179,6 +213,41 @@ class Jt400ProxyClient {
   }
 
   /**
+   * Begin a transaction and return a Transaction handle that bakes in the txId.
+   * Subsequent calls on the handle auto-route to the parked connection.
+   *
+   * Supports callback style (for compat with node-jt400 pool.transaction(fn) usage
+   * in legacy wrappers):
+   *   client.transaction(tx => { ... use tx.query / tx.update;  tx.commit() later });
+   *   // fn is invoked with the handle; for async fns we await it.
+   *
+   * When no callback is passed, returns the handle directly (caller is responsible
+   * for commit/rollback).
+   *
+   * Does NOT auto-commit on callback success (legacy patterns manage commit
+   * explicitly via commitDBTransaction etc).
+   */
+  async transaction(fn) {
+    const txId = await this.beginTransaction();
+    const handle = new Transaction(this, txId);
+    if (typeof fn === 'function') {
+      try {
+        // Support both sync and async callbacks (legacy eval'd code is often sync scheduling)
+        const maybePromise = fn(handle);
+        if (maybePromise && typeof maybePromise.then === 'function') {
+          await maybePromise;
+        }
+        return handle;
+      } catch (e) {
+        // best-effort rollback to match adapter behavior
+        try { await this.rollback(txId); } catch (_) {}
+        throw e;
+      }
+    }
+    return handle;
+  }
+
+  /**
    * Query under an optional tx. If txId provided, uses the parked connection.
    */
   async query(sql, params = [], options = {}) {
@@ -226,7 +295,7 @@ class Jt400ProxyClient {
   async runBatch(queries = [], options = {}) {
     const results = [];
     const totalStart = process.hrtime.bigint();
-    const queryOptions = options.txId ? { txId: options.txId } : {};
+    const queryOptions = this._txOptions(options);
 
     for (const q of queries) {
       const start = process.hrtime.bigint();
@@ -270,7 +339,7 @@ class Jt400ProxyClient {
   async runParallel(queries = [], concurrency = 10, options = {}) {
     const results = new Array(queries.length);
     const totalStart = process.hrtime.bigint();
-    const queryOptions = options.txId ? { txId: options.txId } : {};
+    const queryOptions = this._txOptions(options);
 
     let currentIndex = 0;
 
@@ -400,3 +469,20 @@ module.exports = Jt400ProxyClient;
 const facadeModule = require('./facade');
 module.exports.createFacadeApp = facadeModule.createFacadeApp;
 module.exports.startServer = facadeModule.startServer;
+
+// Expose Transaction handle for advanced use / testing / adapters
+module.exports.Transaction = Transaction;
+
+/**
+ * Factory for a legacy-shaped tx handle (with .update returning affectedRows number,
+ * .query, .commit, .rollback). Lets adapters avoid copy/pasting createTxHandle.
+ */
+module.exports.createTxHandle = function createTxHandle(client, txId) {
+  const tx = new Transaction(client, txId);
+  return {
+    query: (sql, params = []) => tx.query(sql, params),
+    update: (sql, params = []) => tx.execute(sql, params).then(r => (r && r.affectedRows) || 0),
+    commit: () => tx.commit(),
+    rollback: () => tx.rollback(),
+  };
+};

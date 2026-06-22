@@ -236,6 +236,34 @@ curl -X POST http://localhost:3456/parallel \
 ```
 
 They also support `txId` for running the whole batch under a parked transaction.
+You can also pass `"txId": "new"` to have the facade auto-start + auto-commit a tx around the batch.
+
+### Transactions (parked connections)
+
+Because the protocol is multiplexed over stateless framed messages, a tx is represented by a server-parked JDBC connection identified by `txId`.
+
+**Low level (explicit):**
+```js
+const txId = await client.beginTransaction();
+await client.query('INSERT ...', [..], { txId });
+await client.execute('UPDATE ...', [..], { txId });
+await client.commit(txId);
+```
+
+**Recommended: use a handle (deduplicates txId plumbing):**
+```js
+const tx = await client.transaction();           // or client.transaction(async (tx) => { ... })
+await tx.query('SELECT ...', []);
+await tx.execute('UPDATE ...', [val, id]);
+await tx.commit();
+// on error path: await tx.rollback()
+```
+
+The `Transaction` handle also works when using the HTTP facade (POST body can include `txId` on `/query`, `/execute`, `/batch` etc, or use the `/tx/:txId/*` routes).
+
+Legacy `pool.transaction(fn)` style is supported via the jt400-proxy-adapter (and now powered by the same handle).
+
+See `getPoolStats()` output for active parked txs (used by server sweeper for timeout).
 
 ## Protocol (Framed TCP)
 
@@ -277,8 +305,24 @@ Key variables:
 
 **Convenience env file support**:
 - Copy `server/.env.example` → `server/.env` (or `.env.local`)
-- `run.sh` will automatically source it (using `set -a`).
-- On Windows, copy relevant values into `server/env.bat` (see `env.bat.example`). `run.bat` will call it if present.
+- `run.sh` / `start.sh` will automatically source it (using `set -a`).
+- On Windows, copy relevant values into `server/env.bat` (see `env.bat.example`). `run.bat` / `start.bat` will call it if present.
+
+You can also specify a custom env file explicitly as the first argument (recommended when you have multiple environments):
+
+```bash
+# Unix
+server/scripts/run.sh prod.env
+server/scripts/start.sh /etc/jt400/my-server.env
+
+# Windows
+server\scripts\run.bat prod.bat
+server\scripts\start.bat C:\config\prod.bat
+```
+
+Supported forms: `script.sh myfile.env`, `script.sh --env myfile.env`, `script.sh --env-file myfile.env`.
+
+The rest of the command line after the env file (if any) is still forwarded to the Java process.
 
 See `server/src/main/resources/application.properties.example` for the full list and descriptions.
 
@@ -294,7 +338,7 @@ See `client/config.example.json`.
 ## Building & Running
 
 See `server/scripts/run.sh` (or .bat) and the start/stop wrappers in `server/scripts/`.
-Both the run and start scripts support loading from `.env` / `env.bat` automatically.
+Both the run and start scripts support loading from `.env` / `env.bat` automatically (or a custom file passed as the first argument).
 
 ### Building a Distribution
 
@@ -395,6 +439,7 @@ export AS400_HOST=127.0.0.1 AS400_USER=dummy AS400_PASSWORD=dummy AS400_DATABASE
 # cp .env.example .env
 # edit .env with your values
 # scripts/run.sh will source it automatically
+# You can also pass a specific file: ./scripts/run.sh my-test.env
 
 mvn clean package -DskipTests -q
 ./scripts/run.sh

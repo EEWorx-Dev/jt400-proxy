@@ -45,6 +45,42 @@ function createLogger(level = process.env.LOG_LEVEL || 'info') {
   };
 }
 
+/**
+ * Helper to deduplicate transaction "extraction" + auto begin/commit/rollback logic.
+ * Supports magic txId:'new' which creates a tx for the scope of the work,
+ * commits on success, rolls back on error (and surfaces tx info).
+ * Used by /batch and /parallel to avoid copy-paste.
+ */
+async function executeWithTx(c, rawTxId, workFn) {
+  let txId = rawTxId;
+  let createdTx = false;
+  try {
+    if (txId === 'new') {
+      txId = await c.beginTransaction();
+      createdTx = true;
+    }
+
+    const options = txId ? { txId } : {};
+    const result = await workFn(options);
+
+    if (createdTx) {
+      await c.commit(txId);
+      if (result && typeof result === 'object') {
+        result.txId = txId;
+        result.txStatus = 'committed';
+      }
+    }
+    return result;
+  } catch (e) {
+    if (createdTx && txId) {
+      try { await c.rollback(txId); } catch (_) {}
+      // Attach tx info so caller can surface it in error response without duplicating
+      e._txInfo = { txId, txStatus: 'rolledback' };
+    }
+    throw e;
+  }
+}
+
 function createFacadeApp(customClient, logger = console) {
   const app = express();
   app.use(express.json({ limit: '2mb' }));
@@ -62,9 +98,9 @@ function createFacadeApp(customClient, logger = console) {
   app.post('/query', async (req, res) => {
     const start = Date.now();
     try {
-      const { sql, params = [] } = req.body || {};
+      const { sql, params = [], txId } = req.body || {};
       if (!sql) return res.status(400).json({ error: 'sql is required' });
-      const data = await c.query(sql, params);
+      const data = await c.query(sql, params, txId ? { txId } : undefined);
       logger.debug?.('query completed', { durationMs: Date.now() - start, rowCount: data?.length ?? 0 });
       res.json({ data });
     } catch (e) {
@@ -79,9 +115,9 @@ function createFacadeApp(customClient, logger = console) {
   app.post('/execute', async (req, res) => {
     const start = Date.now();
     try {
-      const { sql, params = [] } = req.body || {};
+      const { sql, params = [], txId } = req.body || {};
       if (!sql) return res.status(400).json({ error: 'sql is required' });
-      const result = await c.execute(sql, params);
+      const result = await c.execute(sql, params, txId ? { txId } : undefined);
       logger.debug?.('execute completed', { durationMs: Date.now() - start, affectedRows: result?.affectedRows });
       res.json(result);
     } catch (e) {
@@ -98,38 +134,21 @@ function createFacadeApp(customClient, logger = console) {
   app.post('/batch', async (req, res) => {
     const start = Date.now();
     const { queries = [], txId: rawTxId } = req.body || {};
-    let txId = rawTxId;
-    let createdTx = false;
 
     try {
-      if (txId === 'new') {
-        txId = await c.beginTransaction();
-        createdTx = true;
-      }
-
-      const options = txId ? { txId } : {};
-      const result = await c.runBatch(queries, options);
-
-      if (createdTx) {
-        await c.commit(txId);
-        result.txId = txId;
-        result.txStatus = 'committed';
-      }
+      const result = await executeWithTx(c, rawTxId, (options) => c.runBatch(queries, options));
 
       logger.debug?.('batch completed', { durationMs: Date.now() - start, totalQueries: result.totalQueries });
       res.json(result);
     } catch (e) {
-      if (createdTx && txId) {
-        try { await c.rollback(txId); } catch (_) {}
-      }
       logger.warn?.('batch failed', { error: e.message, sqlState: e.sqlState });
       const errBody = {
         error: e.message || 'batch failed',
         sqlState: e.sqlState || null
       };
-      if (createdTx && txId) {
-        errBody.txId = txId;
-        errBody.txStatus = 'rolledback';
+      if (e._txInfo) {
+        errBody.txId = e._txInfo.txId;
+        errBody.txStatus = e._txInfo.txStatus;
       }
       res.status(500).json(errBody);
     }
@@ -138,38 +157,21 @@ function createFacadeApp(customClient, logger = console) {
   app.post('/parallel', async (req, res) => {
     const start = Date.now();
     const { queries = [], concurrency = 10, txId: rawTxId } = req.body || {};
-    let txId = rawTxId;
-    let createdTx = false;
 
     try {
-      if (txId === 'new') {
-        txId = await c.beginTransaction();
-        createdTx = true;
-      }
-
-      const options = txId ? { txId } : {};
-      const result = await c.runParallel(queries, concurrency, options);
-
-      if (createdTx) {
-        await c.commit(txId);
-        result.txId = txId;
-        result.txStatus = 'committed';
-      }
+      const result = await executeWithTx(c, rawTxId, (options) => c.runParallel(queries, concurrency, options));
 
       logger.debug?.('parallel completed', { durationMs: Date.now() - start, totalQueries: result.totalQueries });
       res.json(result);
     } catch (e) {
-      if (createdTx && txId) {
-        try { await c.rollback(txId); } catch (_) {}
-      }
       logger.warn?.('parallel failed', { error: e.message, sqlState: e.sqlState });
       const errBody = {
         error: e.message || 'parallel failed',
         sqlState: e.sqlState || null
       };
-      if (createdTx && txId) {
-        errBody.txId = txId;
-        errBody.txStatus = 'rolledback';
+      if (e._txInfo) {
+        errBody.txId = e._txInfo.txId;
+        errBody.txStatus = e._txInfo.txStatus;
       }
       res.status(500).json(errBody);
     }

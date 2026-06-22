@@ -16,9 +16,60 @@ if "%BASENAME%"=="scripts" (
 )
 cd /d %SERVER_ROOT%
 
-REM Load env.bat if present
-if exist conf\env.bat (
-  call conf\env.bat
+REM Default location for env file (in conf\ for cleaner distributions)
+set DEFAULT_JT400_ENV_FILE=conf\env.bat
+
+REM Determine JT400_ENV_FILE:
+REM - If supplied as parameter using explicit '--env' or '--env-file', use that value.
+REM - Otherwise default to DEFAULT_JT400_ENV_FILE.
+REM Bare first argument that is an existing file is also accepted as override.
+set JT400_ENV_FILE=
+if not "%~1"=="" (
+  if exist "%~1" (
+    set JT400_ENV_FILE=%~1
+    shift
+  ) else if /i "%~1"=="--env" (
+    if not "%~2"=="" (
+      set JT400_ENV_FILE=%~2
+      shift
+      shift
+    )
+  ) else if /i "%~1"=="--env-file" (
+    if not "%~2"=="" (
+      set JT400_ENV_FILE=%~2
+      shift
+      shift
+    )
+  )
+)
+
+if not defined JT400_ENV_FILE (
+  set JT400_ENV_FILE=%DEFAULT_JT400_ENV_FILE%
+)
+
+REM Load environment file
+set LOADED_ENV=
+if defined JT400_ENV_FILE (
+  if exist "%JT400_ENV_FILE%" (
+    echo Loading environment from %JT400_ENV_FILE%
+    call "%JT400_ENV_FILE%"
+    set LOADED_ENV=1
+  ) else (
+    if /i not "%JT400_ENV_FILE%"=="%DEFAULT_JT400_ENV_FILE%" (
+      echo WARNING: Specified env file not found: %JT400_ENV_FILE%
+    )
+  )
+)
+
+REM If we fell back to the default and nothing was loaded, also try the traditional
+REM root-level env.bat (for source tree + previous documented usage).
+if not defined LOADED_ENV (
+  if /i "%JT400_ENV_FILE%"=="%DEFAULT_JT400_ENV_FILE%" (
+    if exist env.bat (
+      echo Loading environment from env.bat
+      call env.bat
+    )
+  )
 )
 
 REM Locate JAR

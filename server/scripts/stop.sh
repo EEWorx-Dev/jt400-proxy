@@ -13,6 +13,25 @@ fi
 
 cd "$SERVER_ROOT"
 
+# Accept (and ignore) optional env file argument for symmetry with start/run
+# e.g. stop.sh, stop.sh prod.env, stop.sh --env-file prod.env
+if [[ $# -gt 0 ]]; then
+  case "$1" in
+    --env-file|--env)
+      if [[ $# -ge 2 ]]; then
+        shift 2
+      else
+        shift
+      fi
+      ;;
+    *)
+      if [[ -f "$1" ]]; then
+        shift
+      fi
+      ;;
+  esac
+fi
+
 if [[ -f logs/proxy.pid ]]; then
   PID=$(cat logs/proxy.pid)
   if kill -0 "$PID" 2>/dev/null; then

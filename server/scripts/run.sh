@@ -14,15 +14,60 @@ fi
 
 cd "$SERVER_ROOT"
 
-# Source env file if present
-for envfile in .env .env.local; do
-  if [[ -f "$envfile" ]]; then
-    set -a
-    source "./$envfile"
-    set +a
-    break
-  fi
-done
+# Default location for env file (in conf/ for cleaner distributions)
+DEFAULT_JT400_ENV_FILE="conf/.env"
+
+# Determine JT400_ENV_FILE:
+# - If supplied as parameter using explicit '--env' or '--env-file', use that value.
+# - Otherwise default to DEFAULT_JT400_ENV_FILE.
+# Bare first argument that is an existing file is also accepted as override.
+JT400_ENV_FILE=""
+if [[ $# -gt 0 ]]; then
+  case "$1" in
+    --env-file|--env)
+      if [[ $# -ge 2 ]]; then
+        JT400_ENV_FILE="$2"
+        shift 2
+      fi
+      ;;
+    *)
+      if [[ -f "$1" ]]; then
+        JT400_ENV_FILE="$1"
+        shift
+      fi
+      ;;
+  esac
+fi
+
+if [[ -z "$JT400_ENV_FILE" ]]; then
+  JT400_ENV_FILE="$DEFAULT_JT400_ENV_FILE"
+fi
+
+# Source environment file
+SOURCED=""
+if [[ -f "$JT400_ENV_FILE" ]]; then
+  echo "Sourcing $JT400_ENV_FILE"
+  set -a
+  source "$JT400_ENV_FILE"
+  set +a
+  SOURCED=1
+elif [[ "$JT400_ENV_FILE" != "$DEFAULT_JT400_ENV_FILE" ]]; then
+  # Only warn when an explicit file (via arg or --env*) was requested but missing
+  echo "WARNING: Specified env file not found: $JT400_ENV_FILE" >&2
+fi
+
+# If using the default and it was not found, fall back to traditional root-level
+# locations. This keeps source tree usage (server/.env) and previous docs working.
+if [[ -z "$SOURCED" && "$JT400_ENV_FILE" == "$DEFAULT_JT400_ENV_FILE" ]]; then
+  for envfile in .env .env.local; do
+    if [[ -f "$envfile" ]]; then
+      set -a
+      source "./$envfile"
+      set +a
+      break
+    fi
+  done
+fi
 
 # Locate JAR (dist or source layout)
 JAR=""

@@ -13,6 +13,20 @@ if "%BASENAME%"=="scripts" (
 )
 cd /d %SERVER_ROOT%
 
+REM Accept (and ignore) optional env file argument for symmetry with start/run
+REM e.g. stop.bat, stop.bat prod.bat, stop.bat --env prod.bat
+if not "%~1"=="" (
+  if exist "%~1" (
+    shift
+  ) else if /i "%~1"=="--env" (
+    shift
+    if not "%~1"=="" shift
+  ) else if /i "%~1"=="--env-file" (
+    shift
+    if not "%~1"=="" shift
+  )
+)
+
 if exist logs\proxy.pid (
   set /p PID=<logs\proxy.pid
   echo Stopping jt400-proxy-server (PID %PID%)...

@@ -34,10 +34,22 @@ copy conf\env.bat.example env.bat
 bin/start.sh
 ```
 
+You can also pass a specific env file:
+
+```bash
+bin/start.sh my-prod.env
+# or
+bin/start.sh --env-file conf/prod.env
+```
+
 **Windows:**
 
 ```cmd
 bin\start.bat
+```
+
+```cmd
+bin\start.bat my-prod.bat
 ```
 
 The server will listen on the TCP port defined in your configuration (default 9400).
