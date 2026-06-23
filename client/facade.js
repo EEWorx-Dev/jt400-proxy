@@ -180,9 +180,14 @@ function createFacadeApp(customClient, logger = console) {
   app.get('/health', async (req, res) => {
     try {
       const proxyOk = await c.ping();
+      let pingDetails = null;
+      try {
+        pingDetails = await c.pingAll();
+      } catch (_) {}
       res.json({
         status: proxyOk ? 'ok' : 'degraded',
         proxy: { connected: proxyOk },
+        ping: pingDetails,
         links: c.getStats()
       });
     } catch (e) {

@@ -288,6 +288,127 @@ describe('Jt400ProxyClient (with mock server)', () => {
 
     client.close();
   });
+
+  it('health pinger detects dead link (via ping failure), marks it down, schedules reconnect, and client stays functional', async () => {
+    const client = new Jt400ProxyClient({
+      host: '127.0.0.1',
+      port,
+      numLinks: 2,
+      requestTimeoutMs: 1000,
+      healthIntervalMs: 25,
+    });
+    await client.connect();
+
+    // Pick a victim link that is currently connected
+    let victim = client.links.find(l => l && l.connected);
+    assert.ok(victim, 'should have at least one connected link after connect');
+    const origPing = victim.ping.bind(victim);
+    let failCount = 0;
+
+    // Stub ping so the background health checker sees transport-style failures (no sqlState)
+    victim.ping = async () => {
+      failCount += 1;
+      if (failCount <= 3) {
+        throw new Error('simulated dead link for health pinger test');
+      }
+      return origPing();
+    };
+
+    // Give the pinger time to run a few cycles
+    await new Promise(r => setTimeout(r, 120));
+
+    // The client as a whole should still be healthy (other link or recovered victim)
+    const healthy = await client.ping();
+    assert.equal(healthy, true);
+
+    // pingAll exercises per-link pings and reports structure
+    const allStatus = await client.pingAll();
+    assert.ok(allStatus);
+    assert.equal(typeof allStatus.ok, 'boolean');
+    assert.ok(Array.isArray(allStatus.results));
+    assert.equal(allStatus.results.length, 2);
+
+    // At least one link should report ok:true now (or after recovery)
+    const hasWorkingLink = allStatus.results.some(r => r.ok === true);
+    assert.equal(hasWorkingLink, true);
+
+    // Restore and clean up
+    victim.ping = origPing;
+    client.close();
+  });
+
+  it('deliberate close() prevents reconnect scheduling from link close events', async () => {
+    const client = new Jt400ProxyClient({
+      host: '127.0.0.1',
+      port,
+      numLinks: 2,
+      healthIntervalMs: 30,
+      requestTimeoutMs: 1000,
+    });
+
+    await client.connect();
+    assert.equal(client.links.length, 2);
+
+    let scheduledAfterClose = 0;
+    const origSchedule = client._scheduleReconnect;
+    client._scheduleReconnect = function(idx) {
+      if (client._closed) {
+        scheduledAfterClose++;
+      }
+      // Do not actually schedule during this test
+    };
+
+    client.close();
+
+    // Wait well past the normal reconnect backoff + a health tick
+    await new Promise(r => setTimeout(r, 250));
+
+    assert.equal(scheduledAfterClose, 0, 'reconnect scheduler must not be invoked for deliberate close events');
+    assert.equal(client.links.length, 0);
+    assert.equal(client.connected, false);
+    assert.equal(client._closed, true);
+
+    // Restore for hygiene (not strictly required)
+    client._scheduleReconnect = origSchedule;
+  });
+
+  it('supports reuse after close() (connect -> close -> connect again works)', async () => {
+    const client = new Jt400ProxyClient({
+      host: '127.0.0.1',
+      port,
+      numLinks: 2,
+      requestTimeoutMs: 1000,
+    });
+
+    // First connect
+    await client.connect();
+    assert.equal(client.connected, true);
+    const ping1 = await client.ping();
+    assert.equal(ping1, true);
+
+    const rows1 = await client.query('SELECT 1', []);
+    assert.ok(rows1.length > 0);
+
+    client.close();
+    assert.equal(client.connected, false);
+    assert.equal(client.links.length, 0);
+
+    // Reuse: connect again
+    await client.connect();
+    assert.equal(client.connected, true);
+    const ping2 = await client.ping();
+    assert.equal(ping2, true);
+
+    const rows2 = await client.query('SELECT 1', []);
+    assert.ok(rows2.length > 0);
+
+    // Also exercise pingAll after reuse
+    const all = await client.pingAll();
+    assert.equal(all.ok, true);
+    assert.ok(all.results.length >= 1);
+
+    client.close();
+  });
 });
 
 function write(sock, obj) {

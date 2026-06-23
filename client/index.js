@@ -45,15 +45,34 @@ class Jt400ProxyClient {
     this.port = options.port || parseInt(process.env.JT400_PROXY_PORT || '9400', 10);
     this.numLinks = options.numLinks || parseInt(process.env.JT400_PROXY_NUM_LINKS || '3', 10);
     this.requestTimeoutMs = options.requestTimeoutMs || parseInt(process.env.JT400_PROXY_REQUEST_TIMEOUT_MS || '30000', 10);
+    this.healthIntervalMs = options.healthIntervalMs !== undefined
+      ? options.healthIntervalMs
+      : parseInt(process.env.JT400_PROXY_HEALTH_INTERVAL_MS || '15000', 10);
 
     this.links = [];
     this.rrIndex = 0;
     this.connected = false;
+    this._healthTimer = null;
+    this._closed = false;
+    this._reconnectAttempts = [];
   }
 
   async connect() {
     if (this.connected) return this;
 
+    this._closed = false;
+
+    if (this._pendingReconnectTimers) {
+      for (const t of this._pendingReconnectTimers) clearTimeout(t);
+      this._pendingReconnectTimers.clear();
+    }
+
+    if (this._healthTimer) {
+      clearInterval(this._healthTimer);
+      this._healthTimer = null;
+    }
+
+    this._reconnectAttempts = new Array(this.numLinks).fill(0);
     this.links = [];
     const connectPromises = [];
 
@@ -82,21 +101,87 @@ class Jt400ProxyClient {
     const healthy = this.links.filter(l => l.connected).length;
     this.connected = healthy > 0;
 
+    if (this.healthIntervalMs > 0) {
+      this._startHealthPinger();
+    }
+
     console.log(`[Jt400ProxyClient] connected with ${healthy}/${this.numLinks} duplex links to ${this.host}:${this.port}`);
     return this;
   }
 
   _onLinkClose(link, idx) {
-    // Attempt background reconnect for resilience (duplex requirement)
-    setTimeout(async () => {
-      if (!this.links[idx]) return;
-      try {
-        await this.links[idx].connect();
-        console.log(`[Jt400ProxyClient] link ${idx} reconnected`);
-      } catch (e) {
-        // will retry on next use or next timer
+    if (this._closed) return;
+    this._scheduleReconnect(idx);
+  }
+
+  _getReconnectDelay(idx) {
+    const attempt = (this._reconnectAttempts && this._reconnectAttempts[idx]) || 0;
+    const baseMs = 500;
+    const maxMs = 30000;
+    // Exponential backoff: 0.5s, 1s, 2s, 4s, ... capped at 30s
+    const backoff = Math.min(maxMs, baseMs * Math.pow(2, attempt));
+    const jitter = Math.random() * Math.min(1000, backoff * 0.25); // up to 25% jitter, capped
+    return Math.floor(backoff + jitter);
+  }
+
+  _scheduleReconnect(idx) {
+    if (this._closed) return;
+
+    const attempt = (this._reconnectAttempts[idx] || 0);
+    const delay = this._getReconnectDelay(idx);
+    // increment for next time (will be reset on success)
+    if (!this._reconnectAttempts) this._reconnectAttempts = [];
+    this._reconnectAttempts[idx] = attempt + 1;
+
+    const timer = setTimeout(async () => {
+      if (this._pendingReconnectTimers) {
+        this._pendingReconnectTimers.delete(timer);
       }
-    }, 500 + Math.random() * 1500);
+      if (this._closed || !this.links[idx]) return;
+      const link = this.links[idx];
+      if (link.connected || link.connecting) return;
+      try {
+        await link.connect();
+        console.log(`[Jt400ProxyClient] link ${idx} reconnected`);
+        // success: reset backoff for this link
+        if (this._reconnectAttempts) this._reconnectAttempts[idx] = 0;
+      } catch (e) {
+        // will retry with increased backoff on next schedule (from health or future close)
+      }
+    }, delay);
+
+    if (!this._pendingReconnectTimers) this._pendingReconnectTimers = new Set();
+    this._pendingReconnectTimers.add(timer);
+  }
+
+  _startHealthPinger() {
+    if (this._healthTimer || !this.healthIntervalMs || this.healthIntervalMs <= 0) return;
+    this._healthTimer = setInterval(() => {
+      for (let i = 0; i < this.links.length; i++) {
+        this._checkLinkHealth(i).catch(() => {});
+      }
+    }, this.healthIntervalMs);
+    if (typeof this._healthTimer.unref === 'function') {
+      this._healthTimer.unref();
+    }
+  }
+
+  async _checkLinkHealth(i) {
+    if (this._closed) return;
+    const link = this.links[i];
+    if (!link || !link.connected) return;
+    try {
+      const ok = await link.ping();
+      if (!ok) throw new Error('ping returned non-success');
+    } catch (e) {
+      if (this._closed || !link.connected) return;
+      console.warn(`[Jt400ProxyClient] link ${i} health ping failed: ${e.message}`);
+      link.connected = false;
+      try {
+        if (link.socket) link.socket.destroy();
+      } catch (_) {}
+      this._scheduleReconnect(i);
+    }
   }
 
   _pickLink() {
@@ -123,6 +208,54 @@ class Jt400ProxyClient {
   }
 
   /**
+   * Internal request helper with transport-failure resilience:
+   * - Picks a link via _pickLink
+   * - On transport-like errors (not connected, timeout, socket closed, etc.),
+   *   marks the link dead, schedules reconnect, and (for non-txId ops) retries once
+   *   against another link.
+   * - txId-bearing operations are NOT retried on a different link (tx state is
+   *   pinned to the specific server-side FramedConnection that began the tx).
+   */
+  async _request(req) {
+    let lastErr;
+    const hasTxId = !!(req && req.txId);
+    const maxAttempts = hasTxId ? 1 : 2;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const link = this._pickLink();
+      try {
+        const resp = await link.request(req);
+        // successful transport on this link: reset its backoff counter
+        const idx = this.links.indexOf(link);
+        if (idx >= 0 && this._reconnectAttempts) this._reconnectAttempts[idx] = 0;
+        return resp;
+      } catch (e) {
+        // Server/application errors (from success:false responses) are turned into
+        // rejections by the link layer and always carry a sqlState property.
+        // These must be surfaced directly without marking the link dead or retrying.
+        if (e && 'sqlState' in e) {
+          throw e;
+        }
+
+        // Transport / connectivity error: mark this link suspect and retry on another if allowed.
+        lastErr = e;
+        if (link) {
+          link.connected = false;
+          try { if (link.socket) link.socket.destroy(); } catch (_) {}
+          const idx = this.links.indexOf(link);
+          if (idx >= 0) this._scheduleReconnect(idx);
+        }
+
+        if (hasTxId || attempt >= maxAttempts - 1) {
+          throw e;
+        }
+        // retry with a different link for non-txId operations
+      }
+    }
+    throw lastErr;
+  }
+
+  /**
    * Execute a SELECT and return the array of row objects directly.
    * Throws on error (with .sqlState if available from the server).
    */
@@ -130,8 +263,84 @@ class Jt400ProxyClient {
   // The old signatures are kept for backward compat via the new implementations.
 
   async ping() {
-    const link = this._pickLink();
-    return link.ping();
+    // Try links using _request (benefits from alternate-link retry on transport).
+    // If that fails for transport reasons, fall back to explicitly probing links
+    // (ping-all style) until we find one that responds.
+    try {
+      const resp = await this._request({ op: 'ping' });
+      if (resp && resp.success) return true;
+    } catch (e) {
+      if (e && 'sqlState' in e) {
+        // Server returned an error for ping (unusual) — treat as not ok
+        return false;
+      }
+      // transport error on picked link(s); continue to full probe
+    }
+
+    // Explicitly probe links (ping-all behavior) until one succeeds
+    const candidates = this.links.filter(l => l);
+    for (const link of candidates) {
+      try {
+        const ok = await link.ping();
+        if (ok) {
+          link.connected = true;
+          const idx = this.links.indexOf(link);
+          if (idx >= 0 && this._reconnectAttempts) this._reconnectAttempts[idx] = 0;
+          return true;
+        }
+      } catch (e) {
+        if (link.connected) {
+          link.connected = false;
+          try { if (link.socket) link.socket.destroy(); } catch (_) {}
+          const idx = this.links.indexOf(link);
+          if (idx >= 0) this._scheduleReconnect(idx);
+        }
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Ping every configured link and return a detailed report.
+   * This actively uses the 'ping' op on each link (bypassing simple connected flag).
+   */
+  async pingAll() {
+    const results = [];
+    for (let i = 0; i < this.links.length; i++) {
+      const link = this.links[i];
+      if (!link) {
+        results.push({ linkId: i, ok: false, error: 'no link instance' });
+        continue;
+      }
+      let ok = false;
+      let error = null;
+      try {
+        ok = await link.ping();
+      } catch (e) {
+        error = e && e.message ? e.message : String(e);
+        if (link.connected) {
+          link.connected = false;
+          try { if (link.socket) link.socket.destroy(); } catch (_) {}
+          this._scheduleReconnect(i);
+        }
+      }
+      if (ok && !link.connected) {
+        link.connected = true;
+      }
+      if (ok) {
+        const idx = this.links.indexOf(link);
+        if (idx >= 0 && this._reconnectAttempts) this._reconnectAttempts[idx] = 0;
+      }
+      results.push({
+        linkId: i,
+        connected: !!link.connected,
+        ok,
+        error
+      });
+    }
+    const anyOk = results.some(r => r.ok);
+    const allOk = results.length > 0 && results.every(r => r.ok);
+    return { ok: anyOk, allOk, results };
   }
 
   /**
@@ -146,8 +355,7 @@ class Jt400ProxyClient {
    *    The sweeper now uses lastUsed for timeout decisions (last-activity model).
    */
   async getPoolStats() {
-    const link = this._pickLink();
-    const resp = await link.request({ op: 'pool-stats' });
+    const resp = await this._request({ op: 'pool-stats' });
     if (!resp.success) {
       const err = new Error(resp.error || 'failed to get pool stats');
       err.sqlState = resp.sqlState;
@@ -166,14 +374,13 @@ class Jt400ProxyClient {
    * timeout (default 5 minutes).
    */
   async beginTransaction(options = {}) {
-    const link = this._pickLink();
     const req = { op: 'begin-tx' };
     if (options.isolationLevel) req.options = { isolationLevel: options.isolationLevel };
     if (options.timeoutMs) {
       req.options = req.options || {};
       req.options.timeoutMs = options.timeoutMs;
     }
-    const resp = await link.request(req);
+    const resp = await this._request(req);
     if (!resp.success) {
       const err = new Error(resp.error || 'failed to begin tx');
       err.sqlState = resp.sqlState;
@@ -187,8 +394,7 @@ class Jt400ProxyClient {
    */
   async commit(txId) {
     if (!txId) throw new Error('txId is required');
-    const link = this._pickLink();
-    const resp = await link.request({ op: 'commit-tx', txId });
+    const resp = await this._request({ op: 'commit-tx', txId });
     if (!resp.success) {
       const err = new Error(resp.error || 'commit failed');
       err.sqlState = resp.sqlState;
@@ -202,8 +408,7 @@ class Jt400ProxyClient {
    */
   async rollback(txId) {
     if (!txId) throw new Error('txId is required');
-    const link = this._pickLink();
-    const resp = await link.request({ op: 'rollback-tx', txId });
+    const resp = await this._request({ op: 'rollback-tx', txId });
     if (!resp.success) {
       const err = new Error(resp.error || 'rollback failed');
       err.sqlState = resp.sqlState;
@@ -251,10 +456,9 @@ class Jt400ProxyClient {
    * Query under an optional tx. If txId provided, uses the parked connection.
    */
   async query(sql, params = [], options = {}) {
-    const link = this._pickLink();
     const req = { op: 'query', sql, params };
     if (options.txId) req.txId = options.txId;
-    const resp = await link.request(req);
+    const resp = await this._request(req);
     if (!resp.success) {
       const err = new Error(resp.error || 'query failed');
       err.sqlState = resp.sqlState;
@@ -268,10 +472,9 @@ class Jt400ProxyClient {
    * Execute under an optional tx. If txId provided, uses the parked connection.
    */
   async execute(sql, params = [], options = {}) {
-    const link = this._pickLink();
     const req = { op: 'execute', sql, params };
     if (options.txId) req.txId = options.txId;
-    const resp = await link.request(req);
+    const resp = await this._request(req);
     if (!resp.success) {
       const err = new Error(resp.error || 'execute failed');
       err.sqlState = resp.sqlState;
@@ -403,11 +606,38 @@ class Jt400ProxyClient {
   }
 
   close() {
-    for (const l of this.links) {
-      try { l.close(); } catch (_) {}
+    this._closed = true;
+
+    if (this._healthTimer) {
+      clearInterval(this._healthTimer);
+      this._healthTimer = null;
     }
+
+    // Cancel any scheduled reconnect attempts from previous 'close' events or health checks.
+    if (this._pendingReconnectTimers) {
+      for (const t of this._pendingReconnectTimers) {
+        clearTimeout(t);
+      }
+      this._pendingReconnectTimers.clear();
+    }
+
+    // Clear the links array *before* closing the link objects.
+    // This ensures that any 'close' events emitted by l.close() below
+    // (or by in-flight socket closes) will see an empty array in _onLinkClose / _scheduleReconnect.
+    const linksToClose = this.links;
     this.links = [];
     this.connected = false;
+    this._reconnectAttempts = [];
+
+    for (const l of linksToClose) {
+      try {
+        // Remove our listeners so deliberate shutdown 'close'/'error' events
+        // do not trigger reconnect logic or forwarding.
+        l.removeAllListeners('close');
+        l.removeAllListeners('error');
+        l.close();
+      } catch (_) {}
+    }
   }
 }
 
