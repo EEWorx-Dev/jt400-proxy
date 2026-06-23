@@ -1,6 +1,6 @@
 {
   "name": "@eeworx-dev/jt400-proxy-client",
-  "version": "0.1.1",
+  "version": "0.1.2-SNAPSHOT",
   "description": "Dual-mode jt400 proxy client for Node.js: use as a library or run as a standalone HTTP server. Bridges to a stable Java Hikari-backed jt400 proxy over duplex TCP.",
   "main": "index.js",
   "exports": {
