@@ -23,7 +23,7 @@
         <!-- Pinned versions (update after validation against your AS/400 release) -->
         <jt400.version>10.7</jt400.version>
         <hikaricp.version>5.1.0</hikaricp.version>
-        <jackson.version>2.21.3</jackson.version>
+        <jackson.version>2.22.0</jackson.version>
 
         <main.class>dev.eeworx.utils.jt400.proxy.Jt400ProxyServer</main.class>
     </properties>
