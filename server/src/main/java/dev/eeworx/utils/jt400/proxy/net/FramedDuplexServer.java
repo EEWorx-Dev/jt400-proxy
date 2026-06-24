@@ -43,7 +43,7 @@ public class FramedDuplexServer {
     public FramedDuplexServer(ProxyConfig config, HikariPoolManager poolManager) {
         this.config = config;
         this.poolManager = poolManager;
-        this.queryProcessor = new QueryProcessor(poolManager);
+        this.queryProcessor = new QueryProcessor(poolManager, config.isTrimStrings());
         this.txConnectionProvider = createTxConnectionProviderFromPool(poolManager);
         initExecutors();
     }

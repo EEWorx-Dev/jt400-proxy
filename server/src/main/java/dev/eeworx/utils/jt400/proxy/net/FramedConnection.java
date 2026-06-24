@@ -175,6 +175,12 @@ public class FramedConnection implements Runnable {
                 return;
             }
 
+            // Determine effective trimStrings: per-request override or server default (Option B: only affects CHAR/NCHAR)
+            boolean trimStrings = queryProcessor.isTrimStrings();
+            if (req.has("trimStrings")) {
+                trimStrings = req.get("trimStrings").asBoolean();
+            }
+
             QueryProcessor.Result result;
             if (txId != null) {
                 TxContext ctx = parkedTx.get(txId);
@@ -185,7 +191,7 @@ public class FramedConnection implements Runnable {
                 }
                 ctx.touch();
                 try {
-                    result = queryProcessor.execute(sql, params, txConn);
+                    result = queryProcessor.execute(sql, params, txConn, trimStrings);
                 } catch (Exception e) {
                     // Auto-rollback on any error during tx-scoped operation
                     // This prevents leaving the tx in a bad state (e.g. deadlock, constraint violation, etc.)
@@ -193,7 +199,7 @@ public class FramedConnection implements Runnable {
                     throw e;
                 }
             } else {
-                result = queryProcessor.execute(sql, params);
+                result = queryProcessor.execute(sql, params, trimStrings);
             }
 
             ObjectNode resp = result.toJson(MAPPER);

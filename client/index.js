@@ -458,6 +458,7 @@ class Jt400ProxyClient {
   async query(sql, params = [], options = {}) {
     const req = { op: 'query', sql, params };
     if (options.txId) req.txId = options.txId;
+    if (options.trimStrings !== undefined) req.trimStrings = !!options.trimStrings;
     const resp = await this._request(req);
     if (!resp.success) {
       const err = new Error(resp.error || 'query failed');
@@ -474,6 +475,7 @@ class Jt400ProxyClient {
   async execute(sql, params = [], options = {}) {
     const req = { op: 'execute', sql, params };
     if (options.txId) req.txId = options.txId;
+    if (options.trimStrings !== undefined) req.trimStrings = !!options.trimStrings;
     const resp = await this._request(req);
     if (!resp.success) {
       const err = new Error(resp.error || 'execute failed');

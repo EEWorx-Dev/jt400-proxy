@@ -24,13 +24,19 @@ public class QueryProcessor {
 
     private final HikariPoolManager poolManager;
     private final DataSource dataSource;
+    private final boolean trimStrings;
 
     /**
      * Primary constructor used in production (via Hikari pool manager).
      */
     public QueryProcessor(HikariPoolManager poolManager) {
+        this(poolManager, false);
+    }
+
+    public QueryProcessor(HikariPoolManager poolManager, boolean trimStrings) {
         this.poolManager = poolManager;
         this.dataSource = null;
+        this.trimStrings = trimStrings;
     }
 
     /**
@@ -38,8 +44,17 @@ public class QueryProcessor {
      * Allows injecting any DataSource (H2 for unit tests, or a real pooled one for live tests).
      */
     public QueryProcessor(DataSource dataSource) {
+        this(dataSource, false);
+    }
+
+    public QueryProcessor(DataSource dataSource, boolean trimStrings) {
         this.poolManager = null;
         this.dataSource = dataSource;
+        this.trimStrings = trimStrings;
+    }
+
+    public boolean isTrimStrings() {
+        return trimStrings;
     }
 
     public static final class Result {
@@ -122,6 +137,10 @@ public class QueryProcessor {
     }
 
     public Result execute(String sql, List<Object> params) {
+        return execute(sql, params, this.trimStrings);
+    }
+
+    public Result execute(String sql, List<Object> params, boolean trimStrings) {
         long start = System.nanoTime();
         String connInfo = null;
 
@@ -136,7 +155,7 @@ public class QueryProcessor {
 
                 if (hasResultSet) {
                     try (ResultSet rs = ps.getResultSet()) {
-                        List<Map<String, Object>> rows = mapResultSet(rs);
+                        List<Map<String, Object>> rows = mapResultSet(rs, trimStrings);
                         long dur = (System.nanoTime() - start) / 1_000_000;
                         return Result.successSelect(rows, dur, connInfo);
                     }
@@ -165,6 +184,10 @@ public class QueryProcessor {
      * The caller is responsible for the Connection lifecycle (commit/rollback/close).
      */
     public Result execute(String sql, List<Object> params, Connection providedConn) {
+        return execute(sql, params, providedConn, this.trimStrings);
+    }
+
+    public Result execute(String sql, List<Object> params, Connection providedConn, boolean trimStrings) {
         long start = System.nanoTime();
         String connInfo = describeConnection(providedConn);
 
@@ -176,7 +199,7 @@ public class QueryProcessor {
 
                 if (hasResultSet) {
                     try (ResultSet rs = ps.getResultSet()) {
-                        List<Map<String, Object>> rows = mapResultSet(rs);
+                        List<Map<String, Object>> rows = mapResultSet(rs, trimStrings);
                         long dur = (System.nanoTime() - start) / 1_000_000;
                         return Result.successSelect(rows, dur, connInfo);
                     }
@@ -236,6 +259,10 @@ public class QueryProcessor {
     }
 
     List<Map<String, Object>> mapResultSet(ResultSet rs) throws SQLException {
+        return mapResultSet(rs, this.trimStrings);
+    }
+
+    List<Map<String, Object>> mapResultSet(ResultSet rs, boolean trimStrings) throws SQLException {
         ResultSetMetaData meta = rs.getMetaData();
         int colCount = meta.getColumnCount();
         List<String> colNames = new ArrayList<>(colCount);
@@ -251,6 +278,12 @@ public class QueryProcessor {
             Map<String, Object> row = new LinkedHashMap<>(colCount);
             for (int i = 1; i <= colCount; i++) {
                 Object val = rs.getObject(i);
+                if (trimStrings && val instanceof String s) {
+                    int colType = meta.getColumnType(i);
+                    if (colType == Types.CHAR || colType == Types.NCHAR) {
+                        val = s.stripTrailing();
+                    }
+                }
                 row.put(colNames.get(i - 1), val);
             }
             rows.add(row);

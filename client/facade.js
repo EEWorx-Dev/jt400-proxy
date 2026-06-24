@@ -98,9 +98,11 @@ function createFacadeApp(customClient, logger = console) {
   app.post('/query', async (req, res) => {
     const start = Date.now();
     try {
-      const { sql, params = [], txId } = req.body || {};
+      const { sql, params = [], txId, trimStrings } = req.body || {};
       if (!sql) return res.status(400).json({ error: 'sql is required' });
-      const data = await c.query(sql, params, txId ? { txId } : undefined);
+      const qopts = txId ? { txId } : {};
+      if (trimStrings !== undefined) qopts.trimStrings = trimStrings;
+      const data = await c.query(sql, params, qopts);
       logger.debug?.('query completed', { durationMs: Date.now() - start, rowCount: data?.length ?? 0 });
       res.json({ data });
     } catch (e) {
@@ -115,9 +117,11 @@ function createFacadeApp(customClient, logger = console) {
   app.post('/execute', async (req, res) => {
     const start = Date.now();
     try {
-      const { sql, params = [], txId } = req.body || {};
+      const { sql, params = [], txId, trimStrings } = req.body || {};
       if (!sql) return res.status(400).json({ error: 'sql is required' });
-      const result = await c.execute(sql, params, txId ? { txId } : undefined);
+      const qopts = txId ? { txId } : {};
+      if (trimStrings !== undefined) qopts.trimStrings = trimStrings;
+      const result = await c.execute(sql, params, qopts);
       logger.debug?.('execute completed', { durationMs: Date.now() - start, affectedRows: result?.affectedRows });
       res.json(result);
     } catch (e) {

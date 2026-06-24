@@ -32,6 +32,7 @@ public final class ProxyConfig {
     private final int hikariConnectionAcquireRetries;
     private final long txTimeoutMs;
     private final long txSweeperIntervalMs;
+    private final boolean trimStrings;
 
     private ProxyConfig(Builder b) {
         this.host = Objects.requireNonNull(b.host, "AS400_HOST is required");
@@ -56,6 +57,7 @@ public final class ProxyConfig {
         this.hikariConnectionAcquireRetries = b.hikariConnectionAcquireRetries > 0 ? b.hikariConnectionAcquireRetries : 2; // 1 initial + 2 retries = 3 attempts total
         this.txTimeoutMs = b.txTimeoutMs > 0 ? b.txTimeoutMs : 300_000; // 5 minutes
         this.txSweeperIntervalMs = b.txSweeperIntervalMs > 0 ? b.txSweeperIntervalMs : 30_000; // check every 30s
+        this.trimStrings = b.trimStrings;
     }
 
     public static ProxyConfig load() {
@@ -78,6 +80,7 @@ public final class ProxyConfig {
                 .hikariConnectionAcquireRetries(intEnv("HIKARI_CONNECTION_ACQUIRE_RETRIES", 2))
                 .txTimeoutMs(longEnv("TX_TIMEOUT_MS", 300_000))
                 .txSweeperIntervalMs(longEnv("TX_SWEEPER_INTERVAL_MS", 30_000))
+                .trimStrings(booleanEnv("PROXY_TRIM_STRINGS", false))
                 .build();
     }
 
@@ -101,6 +104,12 @@ public final class ProxyConfig {
         try { return Long.parseLong(v.trim()); } catch (NumberFormatException e) { return def; }
     }
 
+    private static boolean booleanEnv(String key, boolean def) {
+        String v = env(key, null);
+        if (v == null) return def;
+        return "true".equalsIgnoreCase(v.trim());
+    }
+
     // Getters
     public String getHost() { return host; }
     public String getUser() { return user; }
@@ -122,6 +131,7 @@ public final class ProxyConfig {
     public int getHikariConnectionAcquireRetries() { return hikariConnectionAcquireRetries; }
     public long getTxTimeoutMs() { return txTimeoutMs; }
     public long getTxSweeperIntervalMs() { return txSweeperIntervalMs; }
+    public boolean isTrimStrings() { return trimStrings; }
 
     /**
      * Build the full JDBC URL for jt400.
@@ -161,6 +171,7 @@ public final class ProxyConfig {
         private int hikariConnectionAcquireRetries;
         private long txTimeoutMs;
         private long txSweeperIntervalMs;
+        private boolean trimStrings;
 
         public Builder host(String v) { this.host = v; return this; }
         public Builder user(String v) { this.user = v; return this; }
@@ -180,6 +191,7 @@ public final class ProxyConfig {
         public Builder hikariConnectionAcquireRetries(int v) { this.hikariConnectionAcquireRetries = v; return this; }
         public Builder txTimeoutMs(long v) { this.txTimeoutMs = v; return this; }
         public Builder txSweeperIntervalMs(long v) { this.txSweeperIntervalMs = v; return this; }
+        public Builder trimStrings(boolean v) { this.trimStrings = v; return this; }
 
         public ProxyConfig build() {
             return new ProxyConfig(this);

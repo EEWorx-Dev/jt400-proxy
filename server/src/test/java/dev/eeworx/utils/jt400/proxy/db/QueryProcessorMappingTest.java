@@ -30,6 +30,10 @@ class QueryProcessorMappingTest {
             st.execute("CREATE TABLE TEST_TABLE (ID INT, NAME VARCHAR(100), BALANCE DECIMAL(10,2), ACTIVE BOOLEAN)");
             st.execute("INSERT INTO TEST_TABLE VALUES (1, 'Alice', 1234.56, TRUE)");
             st.execute("INSERT INTO TEST_TABLE VALUES (2, 'Bob', 99.99, FALSE)");
+
+            st.execute("DROP TABLE IF EXISTS CHAR_TEST");
+            st.execute("CREATE TABLE CHAR_TEST (CODE CHAR(10), DESC CHAR(20))");
+            st.execute("INSERT INTO CHAR_TEST VALUES ('FOO', 'Bar with space   ')");
         }
     }
 
@@ -74,5 +78,26 @@ class QueryProcessorMappingTest {
 
         assertThat(result.success).isFalse();
         assertThat(result.error).isNotBlank();
+    }
+
+    @Test
+    void trimStringsOnlyAffectsCharColumnsWhenFlagEnabled() {
+        // Default (false) - no trimming
+        QueryProcessor noTrim = new QueryProcessor(dataSource);
+        QueryProcessor.Result r1 = noTrim.execute("SELECT CODE, DESC FROM CHAR_TEST", List.of());
+        assertThat(r1.success).isTrue();
+        assertThat((String) r1.data.get(0).get("CODE")).isEqualTo("FOO       "); // CHAR(10) padded
+        assertThat((String) r1.data.get(0).get("DESC")).isEqualTo("Bar with space      "); // CHAR(20) padded (14 chars + 6 spaces)
+
+        // With trimStrings=true - only CHAR columns trimmed
+        QueryProcessor withTrim = new QueryProcessor(dataSource, true);
+        QueryProcessor.Result r2 = withTrim.execute("SELECT CODE, DESC FROM CHAR_TEST", List.of());
+        assertThat(r2.success).isTrue();
+        assertThat((String) r2.data.get(0).get("CODE")).isEqualTo("FOO"); // right-trimmed
+        assertThat((String) r2.data.get(0).get("DESC")).isEqualTo("Bar with space");
+
+        // Also test per-call flag
+        QueryProcessor.Result r3 = noTrim.execute("SELECT CODE, DESC FROM CHAR_TEST", List.of(), true);
+        assertThat((String) r3.data.get(0).get("CODE")).isEqualTo("FOO");
     }
 }

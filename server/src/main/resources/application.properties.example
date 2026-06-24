@@ -46,5 +46,11 @@ TX_TIMEOUT_MS=300000
 # Sweeper check interval (how often we scan for expired transactions).
 TX_SWEEPER_INTERVAL_MS=30000
 
+# Trim trailing whitespace from CHAR/NCHAR columns (right-padding from fixed-length strings).
+# When true, only CHAR and NCHAR column types are trimmed (safer than trimming all strings).
+# Can be overridden per-request by sending "trimStrings": true in query/execute JSON.
+# Default: false (preserves original behavior and any intentional trailing spaces).
+PROXY_TRIM_STRINGS=false
+
 # Optional: simple log level control if we add a logger later
 LOG_LEVEL=INFO
