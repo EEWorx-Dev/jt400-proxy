@@ -62,9 +62,9 @@
                            developer machines.
 
                          Note on package.json / package-lock.json:
-                         The frontend-maven-plugin updates them during prepare-package (part of
+                         The frontend-maven-plugin updates them during validate (part of
                          clean verify). We also run "git add" on them via exec-maven-plugin in the
-                         same phase so that the release plugin's commit will include them.
+                         same early phase so that the release plugin's commit will include them.
                          Without the explicit git add, release:prepare commonly only commits the
                          POMs and skips the Node package files (this exact gotcha). -->
                     <preparationGoals>clean verify</preparationGoals>
