@@ -250,8 +250,23 @@ public class QueryProcessor {
             } else if (val instanceof Boolean) {
                 ps.setBoolean(jdbcIdx, (Boolean) val);
             } else if (val instanceof java.util.Date) {
-                // Basic handling; callers can pass ISO strings for dates/times for full control
                 ps.setTimestamp(jdbcIdx, new Timestamp(((java.util.Date) val).getTime()));
+            } else if (val instanceof String) {
+                String s = (String) val;
+                if (s.matches("^\\d{4}-\\d{2}-\\d{2}$")) {
+                    // DATE only
+                    ps.setDate(jdbcIdx, java.sql.Date.valueOf(s));
+                } else if (s.matches("^\\d{4}-\\d{2}-\\d{2}[ T].*")) {
+                    // TIMESTAMP-like (ISO or with space)
+                    try {
+                        String norm = s.replace('T', ' ');
+                        ps.setTimestamp(jdbcIdx, Timestamp.valueOf(norm.length() > 19 ? norm.substring(0, 19) : norm));
+                    } catch (Exception ignore) {
+                        ps.setString(jdbcIdx, s);
+                    }
+                } else {
+                    ps.setString(jdbcIdx, s);
+                }
             } else {
                 ps.setString(jdbcIdx, val.toString());
             }

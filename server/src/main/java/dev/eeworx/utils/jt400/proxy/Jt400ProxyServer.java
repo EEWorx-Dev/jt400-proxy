@@ -29,8 +29,8 @@ public class Jt400ProxyServer {
         ProxyConfig config;
         try {
             config = ProxyConfig.load();
-            log.info("Config loaded. AS400 host={} db={} tcpPort={} hikariMaxPool={}",
-                    config.getHost(), config.getDatabase(), config.getTcpPort(), config.getHikariMaxPoolSize());
+            log.info("Config loaded. AS400 host={} db={} tcpPort={} hikariMaxPool={} trim={}",
+                    config.getHost(), config.getDatabase(), config.getTcpPort(), config.getHikariMaxPoolSize(), config.isTrimStrings());
         } catch (Exception e) {
             log.error("FATAL: Failed to load configuration: {}", e.getMessage());
             log.error("Required env: AS400_HOST, AS400_USER, AS400_PASSWORD (or provide via other means).");
