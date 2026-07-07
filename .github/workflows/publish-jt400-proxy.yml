@@ -1,29 +1,29 @@
 name: Publish @eeworx-dev/jt400-proxy (client + server)
 # Single workflow file with multiple jobs: one for the Node/npm client package,
-# one for the Java/Maven server package.
+# one for the Java/Maven artifacts (parent, server, client, dist).
 #
 # Triggers:
 # - workflow_dispatch (manual from Actions tab):
 #     - Always runs the client (npm) publish job for whatever is on the branch.
-#     - Runs deploy-server only if you set include_server=true and provide a server_tag
+#     - Runs mvn-deploy only if you set include_server=true and provide a server_tag
 #       (the tag must exist and contain the release versions in the POMs + client/package.json).
 # - release (created/published/released via GitHub Releases UI or gh release): both jobs run
 #   automatically using the release's tag for context.
 #
-# The deploy-server job requires a concrete tag/ref (either from the release event or your input)
-# because it does `checkout` + `mvn deploy -pl :jt400-proxy-server -am`. This deploys the exact
-# versions present at that tag.
+# The mvn-deploy job requires a concrete tag/ref (either from the release event or your input)
+# because it does `checkout` + `mvn deploy` (full reactor) against the exact released versions.
+# This deploys parent, server, client (Maven), and dist artifacts.
 #
-# Both the client publish and server deploy steps are guarded with "already exists"
+# Both the client publish and Maven deploy steps are guarded with "already exists"
 # checks (npm view for client, HEAD of the published .jar for server via GH Packages).
 # This makes re-running the workflow for an existing release a no-op instead of failing
 # on duplicate artifact/version errors.
 #
 # A debug step (in the 'publish' job) always prints github.event_name so you can
-# see why deploy-server was skipped (e.g. "release=false" in the UI means the
+# see why mvn-deploy was skipped (e.g. "release=false" in the UI means the
 # triggering event was not a release event).
 #
-# Uses direct `npm publish` for client and `mvn deploy` (on tag) for server,
+# Uses direct `npm publish` for client and `mvn deploy` (on tag, full reactor) for Maven artifacts,
 # per root pom guidance (maven-release-plugin is configured for verify only).
 
 on:
@@ -33,13 +33,13 @@ on:
       # To re-enable the version input, add it back under inputs.
 
       include_server:
-        description: 'Also run the server (Java/Maven) deploy job. You must provide a server_tag that points to a commit with the final (non-SNAPSHOT) versions in the poms.'
+        description: 'Also run the mvn-deploy job (full Maven reactor: parent, server, client, dist). You must provide a server_tag that points to a commit with the final (non-SNAPSHOT) versions in the poms.'
         required: false
         default: false
         type: boolean
 
       server_tag:
-        description: 'Git tag/ref to checkout for the server deploy (e.g. 0.1.0 or v0.1.0). Only used when include_server=true. On real release events this is taken from the release context automatically.'
+        description: 'Git tag/ref to checkout for the mvn-deploy job (e.g. 0.1.0 or v0.1.0). Only used when include_server=true. On real release events this is taken from the release context automatically.'
         required: false
         type: string
 
@@ -135,12 +135,12 @@ jobs:
           fi
           echo "View packages at: https://github.com/eeworx-dev?tab=packages"
 
-  deploy-server:
-    # Deploy the Maven (Java server) artifact.
+  mvn-deploy:
+    # Deploy Maven artifacts for the full reactor (parent, server, client, dist).
     # - Real release events: automatic (tag from github.event.release.*)
     # - Manual workflow_dispatch: only when include_server=true + server_tag provided.
     # The job still requires a concrete checkout ref because it runs
-    # `mvn deploy -pl :jt400-proxy-server -am` against the exact released POM versions.
+    # `mvn deploy` (full reactor, no -pl) against the exact released versions from the tag.
     if: >-
       github.event_name == 'release' ||
       (github.event_name == 'workflow_dispatch' && github.event.inputs.include_server == 'true')
@@ -150,14 +150,14 @@ jobs:
       packages: write
 
     steps:
-      - name: Debug release event (deploy-server)
+      - name: Debug release event (mvn-deploy)
         run: |
           echo "github.event_name=${{ github.event_name }}"
           echo "Release tag from context: ${{ github.event.release.tag_name }}"
           echo "include_server input: ${{ github.event.inputs.include_server }}"
           echo "server_tag input: ${{ github.event.inputs.server_tag }}"
 
-      - name: Validate manual server deploy inputs
+      - name: Validate manual mvn deploy inputs
         if: github.event_name == 'workflow_dispatch'
         run: |
           if [ "${{ github.event.inputs.include_server }}" != "true" ]; then
@@ -168,7 +168,7 @@ jobs:
             echo "::error::server_tag input is required when include_server=true for a manual run"
             exit 1
           fi
-          echo "Manual server deploy requested for tag: ${{ github.event.inputs.server_tag }}"
+          echo "Manual Maven reactor deploy requested for tag: ${{ github.event.inputs.server_tag }}"
 
       - name: Checkout release tag
         uses: actions/checkout@v4
@@ -182,20 +182,21 @@ jobs:
           distribution: 'temurin'
           cache: maven
 
-      - name: Check if server version already deployed to GitHub Packages
+      - name: Check if artifacts already deployed to GitHub Packages
         id: check_server_deploy
         run: |
-          # Resolve the exact release version from the checked-out poms (must match the tag)
+          # Resolve the exact release version from the checked-out poms (must match the tag).
+          # Server module used as version representative for the full reactor (parent + server + client + dist).
           SERVER_VERSION=$(mvn -B help:evaluate -Dexpression=project.version -q -DforceStdout -pl :jt400-proxy-server -am 2>/dev/null || echo "")
           if [ -z "$SERVER_VERSION" ]; then
-            echo "Failed to resolve server version from POMs"
+            echo "Failed to resolve version from POMs"
             exit 1
           fi
           echo "server_version=$SERVER_VERSION" >> $GITHUB_OUTPUT
           GROUP_PATH=dev/eeworx/utils
           ARTIFACT=jt400-proxy-server
           URL="https://maven.pkg.github.com/eeworx-dev/jt400-proxy/${GROUP_PATH}/${ARTIFACT}/${SERVER_VERSION}/${ARTIFACT}-${SERVER_VERSION}.jar"
-          echo "Checking for existing server artifact at $URL"
+          echo "Checking for existing artifact at $URL (for full reactor deploy)"
           # Use token for auth (works for both private and public packages)
           HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
@@ -203,10 +204,10 @@ jobs:
             "$URL" || echo "000")
           if [ "$HTTP_STATUS" = "200" ] || [ "$HTTP_STATUS" = "302" ]; then
             echo "exists=true" >> $GITHUB_OUTPUT
-            echo "Server artifact $SERVER_VERSION already exists — skipping deploy."
+            echo "Artifact $SERVER_VERSION already exists — skipping deploy."
           else
             echo "exists=false" >> $GITHUB_OUTPUT
-            echo "Server artifact $SERVER_VERSION not present (HTTP $HTTP_STATUS) — will deploy."
+            echo "Artifact $SERVER_VERSION not present (HTTP $HTTP_STATUS) — will deploy."
           fi
       
       - name: Configure Maven settings for GitHub Packages
@@ -228,8 +229,9 @@ jobs:
           </settings>
           EOF
 
-      - name: Deploy server artifact to GitHub Packages
+      - name: Deploy artifacts to GitHub Packages
         if: steps.check_server_deploy.outputs.exists == 'false'
-        run: mvn -B deploy -DskipTests -pl :jt400-proxy-server -am
+        # Deploys the full Maven reactor (parent, server, client, dist) — no -pl used.
+        run: mvn -B deploy -DskipTests
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
