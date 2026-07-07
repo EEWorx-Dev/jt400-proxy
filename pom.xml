@@ -47,8 +47,7 @@
                 <version>3.0.1</version>
                 <configuration>
                     <autoVersionSubmodules>true</autoVersionSubmodules>
-                    <useReleaseProfile>false</useReleaseProfile>
-                    <releaseProfiles>release</releaseProfiles>
+                    <preparationProfiles>release-prep</preparationProfiles>
                     <!-- Hybrid release model:
                          - Use mvn release:prepare to bump versions (POMs + client/package*.json
                            via the "release" profile in client/pom.xml), commit, and tag.
@@ -61,10 +60,6 @@
                          and the next developmentVersion. -->
                     <preparationGoals>clean verify</preparationGoals>
                     <goals>verify</goals>
-                    <!-- commitByProject=true helps ensure that changes made inside
-                         sub-modules (e.g. client/package.json updated by frontend-maven-plugin)
-                         are committed as part of the release prepare. -->
-                    <commitByProject>true</commitByProject>
                 </configuration>
             </plugin>
 

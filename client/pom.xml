@@ -45,7 +45,7 @@
              the release version and the next developmentVersion during release:prepare.
              This makes the package.json/package-lock.json version update implicit. -->
         <profile>
-            <id>release</id>
+            <id>release-prep</id>
             <build>
                 <plugins>
                     <plugin>
