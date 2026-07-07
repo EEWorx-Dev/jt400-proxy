@@ -39,6 +39,63 @@
                 </plugins>
             </build>
         </profile>
+
+        <!-- Release profile (activated by maven-release-plugin via <releaseProfiles>release</releaseProfiles>).
+             Puts the version sync + git staging inside the profile so it runs for BOTH
+             the release version and the next developmentVersion during release:prepare.
+             This makes the package.json/package-lock.json version update implicit. -->
+        <profile>
+            <id>release</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>com.github.eirslett</groupId>
+                        <artifactId>frontend-maven-plugin</artifactId>
+                        <executions>
+                            <!-- Sync Maven version to package.json during release:prepare.
+                                 The "npm version" runs when release profile is active and verify is executed
+                                 (for both release and dev version steps). -->
+                            <execution>
+                                <id>npm-version</id>
+                                <goals>
+                                    <goal>npm</goal>
+                                </goals>
+                                <phase>prepare-package</phase>
+                                <configuration>
+                                    <arguments>version ${project.version} --no-git-tag-version --allow-same-version</arguments>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+
+                    <plugin>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>exec-maven-plugin</artifactId>
+                        <version>3.2.0</version>
+                        <executions>
+                            <execution>
+                                <id>git-add-package-files-for-release</id>
+                                <goals>
+                                    <goal>exec</goal>
+                                </goals>
+                                <phase>verify</phase>
+                                <configuration>
+                                    <executable>git</executable>
+                                    <arguments>
+                                        <argument>add</argument>
+                                        <argument>package.json</argument>
+                                        <argument>package-lock.json</argument>
+                                    </arguments>
+                                    <successCodes>
+                                        <successCode>0</successCode>
+                                    </successCodes>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
     </profiles>
 
     <build>
@@ -89,22 +146,6 @@
                         </configuration>
                     </execution>
 
-                    <!-- Sync Maven version to package.json during release prepare -->
-                    <!-- The maven-release-plugin updates the pom version first.
-                    A follow-up exec-maven-plugin execution (below) does "git add" on
-                    package.json + package-lock.json so that release:prepare will
-                    actually commit them (otherwise they are often skipped). -->
-                    <execution>
-                        <id>npm-version</id>
-                        <goals>
-                            <goal>npm</goal>
-                        </goals>
-                        <phase>prepare-package</phase>
-                        <configuration>
-                            <arguments>version ${project.version} --no-git-tag-version --allow-same-version</arguments>
-                        </configuration>
-                    </execution>
-
                     <execution>
                         <id>npm-pack</id>
                         <goals>
@@ -136,39 +177,6 @@
                                     <type>tgz</type>
                                 </artifact>
                             </artifacts>
-                        </configuration>
-                    </execution>
-                </executions>
-            </plugin>
-            
-            
-            <!-- Exec plugin: ensures that package.json + package-lock.json
-            (updated by the "npm version" execution above during release:prepare)
-            are explicitly staged so the maven-release-plugin will commit them.
-            Without this, release:prepare often only commits the POM files
-            and skips the Node package files (known gotcha). -->
-            <plugin>
-                <groupId>org.codehaus.mojo</groupId>
-                <artifactId>exec-maven-plugin</artifactId>
-                <version>3.2.0</version>
-                <executions>
-                    <execution>
-                        <id>git-add-package-files-for-release</id>
-                        <goals>
-                            <goal>exec</goal>
-                        </goals>
-                        <phase>prepare-package</phase>
-                        <configuration>
-                            <executable>git</executable>
-                            <arguments>
-                                <argument>add</argument>
-                                <argument>package.json</argument>
-                                <argument>package-lock.json</argument>
-                            </arguments>
-                            <!-- Fail the build if git add fails (e.g. not a git repo) -->
-                            <successCodes>
-                                <successCode>0</successCode>
-                            </successCodes>
                         </configuration>
                     </execution>
                 </executions>

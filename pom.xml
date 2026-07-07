@@ -50,23 +50,15 @@
                     <useReleaseProfile>false</useReleaseProfile>
                     <releaseProfiles>release</releaseProfiles>
                     <!-- Hybrid release model:
-                         - Use mvn release:prepare (locally or in CI) to bump versions across
-                           all modules (including syncing client/package.json via frontend-maven-plugin),
-                           commit, and create the git tag.
-                         - preparationGoals + goals=verify ensure that release:prepare/perform
-                           stop before any deploy step.
-                         - The actual artifact deploy (server to Maven GH Packages + client npm)
-                           is done by this repo's GitHub Actions workflow on the release event
-                           (see .github/workflows/publish-jt400-proxy.yml). This centralizes auth
-                           (GITHUB_TOKEN with packages:write) and avoids running deploys from
-                           developer machines.
+                         - Use mvn release:prepare to bump versions (POMs + client/package*.json
+                           via the "release" profile in client/pom.xml), commit, and tag.
+                         - preparationGoals + goals=verify stop before deploy.
+                         - Actual deploys happen via GitHub Actions on release event.
 
-                         Note on package.json / package-lock.json:
-                         The frontend-maven-plugin updates them during prepare-package (part of
-                         clean verify). We also run "git add" on them via exec-maven-plugin in the
-                         same phase so that the release plugin's commit will include them.
-                         Without the explicit git add, release:prepare commonly only commits the
-                         POMs and skips the Node package files (this exact gotcha). -->
+                         Version sync for package.json/package-lock.json is now inside the
+                         "release" profile (activated by maven-release-plugin). This ensures
+                         the npm version step runs implicitly for BOTH the release version
+                         and the next developmentVersion. -->
                     <preparationGoals>clean verify</preparationGoals>
                     <goals>verify</goals>
                     <!-- commitByProject=true helps ensure that changes made inside
