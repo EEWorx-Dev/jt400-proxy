@@ -7,16 +7,22 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import javax.sql.DataSource;
 
 import java.sql.*;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
  * Executes a single SQL statement (query or update) using a short-lived pooled Connection.
  * Returns a JSON-friendly result structure ready for the framed protocol.
  *
- * This is where the "returns results as an array of json objects" requirement is implemented.
+ * This is where the "returns results as an array of JSON objects" requirement is implemented.
  */
 public class QueryProcessor {
 
@@ -25,6 +31,11 @@ public class QueryProcessor {
     private final HikariPoolManager poolManager;
     private final DataSource dataSource;
     private final boolean trimStrings;
+
+    // Precompiled patterns for fast per-call matching
+    private static final Pattern DATE_PATTERN = Pattern.compile("^\\d{4}-\\d{2}-\\d{2}$");
+    private static final Pattern TIMESTAMP_PATTERN = Pattern.compile("^\\d{4}-\\d{2}-\\d{2}[T ]\\d{2}:\\d{2}:\\d{2}.*$");
+
 
     /**
      * Primary constructor used in production (via Hikari pool manager).
@@ -142,12 +153,12 @@ public class QueryProcessor {
 
     public Result execute(String sql, List<Object> params, boolean trimStrings) {
         long start = System.nanoTime();
-        String connInfo = null;
+        String connInfo;
 
         try (Connection c = acquireConnection()) {
             connInfo = describeConnection(c);
 
-            // Use Statement.execute + branch on result set vs update count for robustness
+            // Use Statement.execute + branch on resultset vs. update count for robustness
             try (PreparedStatement ps = c.prepareStatement(sql)) {
                 bindParameters(ps, params);
 
@@ -235,40 +246,53 @@ public class QueryProcessor {
 
     private void bindParameters(PreparedStatement ps, List<Object> params) throws SQLException {
         if (params == null) return;
+
         for (int i = 0; i < params.size(); i++) {
             Object val = params.get(i);
             int jdbcIdx = i + 1;
 
-            if (val == null) {
-                ps.setNull(jdbcIdx, Types.VARCHAR);
-            } else if (val instanceof Integer) {
-                ps.setInt(jdbcIdx, (Integer) val);
-            } else if (val instanceof Long) {
-                ps.setLong(jdbcIdx, (Long) val);
-            } else if (val instanceof Double || val instanceof Float) {
-                ps.setDouble(jdbcIdx, ((Number) val).doubleValue());
-            } else if (val instanceof Boolean) {
-                ps.setBoolean(jdbcIdx, (Boolean) val);
-            } else if (val instanceof java.util.Date) {
-                ps.setTimestamp(jdbcIdx, new Timestamp(((java.util.Date) val).getTime()));
-            } else if (val instanceof String) {
-                String s = (String) val;
-                if (s.matches("^\\d{4}-\\d{2}-\\d{2}$")) {
-                    // DATE only
-                    ps.setDate(jdbcIdx, java.sql.Date.valueOf(s));
-                } else if (s.matches("^\\d{4}-\\d{2}-\\d{2}[ T].*")) {
-                    // TIMESTAMP-like (ISO or with space)
-                    try {
-                        String norm = s.replace('T', ' ');
-                        ps.setTimestamp(jdbcIdx, Timestamp.valueOf(norm.length() > 19 ? norm.substring(0, 19) : norm));
-                    } catch (Exception ignore) {
+            try {
+                if (val == null) {
+                    ps.setNull(jdbcIdx, Types.VARCHAR);
+                } else if (val instanceof Integer) {
+                    ps.setInt(jdbcIdx, (Integer) val);
+                } else if (val instanceof Long) {
+                    ps.setLong(jdbcIdx, (Long) val);
+                } else if (val instanceof Double || val instanceof Float) {
+                    ps.setDouble(jdbcIdx, ((Number) val).doubleValue());
+                } else if (val instanceof Boolean) {
+                    ps.setBoolean(jdbcIdx, (Boolean) val);
+                }
+                else if (val instanceof String s) {
+                    // --- ISO Date/Timestamp Handling ---
+                    if (DATE_PATTERN.matcher(s).matches()) {
+                        if (TIMESTAMP_PATTERN.matcher(s).matches()) {
+                            // Offset-aware or naive ISO datetime -> Timestamp
+                            OffsetDateTime odt;
+                            try {
+                                odt = OffsetDateTime.parse(s);
+                            } catch (Exception ex) {
+                                // Fallback for naive "yyyy-MM-ddTHH:mm:ss" without offset
+                                String normalized = s.replace(' ', 'T');
+                                odt = LocalDateTime.parse(normalized, DateTimeFormatter.ISO_LOCAL_DATE_TIME)
+                                        .atOffset(ZoneOffset.UTC);
+                            }
+                            ps.setTimestamp(jdbcIdx, Timestamp.valueOf(odt.toLocalDateTime()));
+                        } else {
+                            // Strict ISO date -> Date
+                            ps.setDate(jdbcIdx, java.sql.Date.valueOf(LocalDate.parse(s)));
+                        }
+                    } else {
+                        // Non-date string -> bind as-is
                         ps.setString(jdbcIdx, s);
                     }
-                } else {
-                    ps.setString(jdbcIdx, s);
                 }
-            } else {
-                ps.setString(jdbcIdx, val.toString());
+            } catch (SQLException e) {
+                throw e; // Preserve SQL exceptions as-is
+            } catch (Exception e) {
+                throw new SQLException(
+                        String.format("Failed to bind parameter #%d (%s): '%s'",
+                                jdbcIdx, (val != null ? val.getClass().getSimpleName() : "null"), val), e);
             }
         }
     }
